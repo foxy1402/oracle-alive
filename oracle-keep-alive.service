@@ -1,0 +1,27 @@
+[Unit]
+Description=Oracle Cloud Keep-Alive Service
+Documentation=https://github.com/your-repo/oracle-alive
+After=network.target network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/opt/oracle-keep-alive/keep-alive.sh
+Restart=always
+RestartSec=30
+StandardOutput=journal
+StandardError=journal
+
+# Run as root to access /var/log
+User=root
+Group=root
+
+# Environment variables (can be overridden in /etc/default/oracle-keep-alive)
+EnvironmentFile=-/etc/default/oracle-keep-alive
+
+# Resource limits (optional)
+Nice=19
+IOSchedulingClass=idle
+
+[Install]
+WantedBy=multi-user.target
