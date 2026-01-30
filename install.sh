@@ -10,7 +10,7 @@
 
 set -euo pipefail
 
-VERSION="2.0.0"
+VERSION="2.1.0"
 
 # Colors
 RED='\033[0;31m'
@@ -29,8 +29,8 @@ LOGROTATE_FILE="/etc/logrotate.d/oracle-keep-alive"
 print_header() {
     echo -e "${BLUE}"
     echo "╔════════════════════════════════════════════════════════════════╗"
-    echo "║     Oracle Cloud Keep-Alive Installer v${VERSION}                ║"
-    echo "║     Gaming VPN Optimized - Won't interfere with your traffic   ║"
+    echo "║     Oracle Cloud Keep-Alive Installer v${VERSION}             ║"
+    echo "║     Intelligent Multi-Metric Edition                          ║"
     echo "╚════════════════════════════════════════════════════════════════╝"
     echo -e "${NC}"
 }
@@ -346,16 +346,15 @@ show_help() {
 
 show_version() {
     echo "Oracle Cloud Keep-Alive Installer v${VERSION}"
-    echo "Gaming VPN Optimized Edition"
+    echo "Intelligent Multi-Metric Edition"
     echo
     echo "Features:"
-    echo "  • Smart network stress (won't lag your games)"
-    echo "  • Traffic shaping support"
-    echo "  • Bandwidth limiting"
-    echo "  • Auto-adjustment failsafe"
-    echo "  • Multi-provider distributed targets"
+    echo "  • Automatic baseline detection"
+    echo "  • Smart gap calculation"
+    echo "  • Dynamic stress adjustment"
+    echo "  • Triple protection (CPU/Memory/Network)"
+    echo "  • Gaming-friendly (won't lag your VPN)"
     echo
-    echo "For more info: https://github.com/YOUR_USERNAME/oracle-alive"
 }
 
 # Main

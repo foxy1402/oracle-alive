@@ -1,5 +1,5 @@
 [Unit]
-Description=Oracle Cloud Keep-Alive Service v2.0 (Gaming VPN Optimized)
+Description=Oracle Cloud Keep-Alive Service v2.1 (Intelligent Multi-Metric Edition)
 Documentation=https://github.com/YOUR_USERNAME/oracle-alive
 After=network-online.target
 Wants=network-online.target
