@@ -35,7 +35,7 @@ Oracle deletes free cloud servers if they're "not being used enough." This scrip
 **On your Oracle Cloud server, run these commands:**
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/oracle-alive.git
+git clone https://github.com/foxy1402/oracle-alive.git
 cd oracle-alive
 ```
 
