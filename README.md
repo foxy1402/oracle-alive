@@ -35,6 +35,11 @@ Oracle deletes free cloud servers if they're "not being used enough." This scrip
 **On your Oracle Cloud server, run these commands:**
 
 ```bash
+# Install Git first (if not installed)
+sudo apt update && sudo apt install git -y   # Ubuntu/Debian
+# OR
+sudo yum install git -y                      # Oracle Linux
+
 git clone https://github.com/foxy1402/oracle-alive.git
 cd oracle-alive
 ```
