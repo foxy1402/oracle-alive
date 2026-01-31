@@ -310,8 +310,8 @@ LOGROTATE
     echo
     
     echo -e "${YELLOW}⚠  Important:${NC}"
-    echo "  • At least ONE metric must stay above 15% to avoid reclaim"
-    echo "  • Default settings target ~8% avg CPU (safe margin)"
+    echo "  • At least ONE metric must stay above 20% to avoid reclaim"
+    echo "  • Default settings target 40% (double minimum) on all metrics"
     echo "  • Gaming traffic is prioritized over keep-alive traffic"
     echo "  • See README.md for troubleshooting and optimization"
     echo

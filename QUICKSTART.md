@@ -99,9 +99,9 @@ sudo systemctl restart oracle-keep-alive
 3. Click **Metrics**
 4. Check after 1 hour, then daily for first week
 
-**Goal:** At least ONE metric above 15% average:
-- ✅ CPU: Should show ~8-10% average, spikes to 95%
-- ✅ Memory: Periodic spikes
+**Goal:** At least ONE metric above 20% average:
+- ✅ CPU: Should show ~40-45% average, spikes to 95%
+- ✅ Memory: Periodic spikes to ~45%
 - ✅ Network: Continuous activity
 
 ---
@@ -130,7 +130,7 @@ sudo bash install.sh --uninstall
 
 ## Troubleshooting
 
-### ❌ Metrics still below 15%?
+### ❌ Metrics still below 20%?
 
 **Option 1:** Reduce sleep time
 ```bash
@@ -189,23 +189,23 @@ sudo systemctl restart oracle-keep-alive
 - [x] Logs show regular cycles: `sudo tail -f /var/log/oracle-keep-alive.log`
 - [x] No gaming lag detected (test for 30 minutes)
 - [x] Oracle Cloud metrics checked (after 24 hours)
-- [x] At least ONE metric above 15%
+- [x] At least ONE metric above 20%
 
 ---
 
 ## What Happens Next?
 
 ### First Week
-- Script runs every ~8.5 minutes (45s stress + 480s sleep)
-- Generates ~8% average CPU load
-- Creates gentle network activity
-- Memory spikes periodically
+- Script runs every ~5-10 minutes (intelligent cycle timing)
+- Generates ~40-45% average CPU load
+- Creates active network activity
+- Memory maintained at ~45%
 
 ### Oracle Cloud Monitoring
 - Oracle monitors your instance 24/7
 - Checks CPU, memory, network every minute
 - Calculates 95th percentile over 7 days
-- Our periodic spikes ensure you stay above 15%
+- Our intelligent stress ensures you stay above 20% (target 40%)
 
 ### Your Gaming
 - VPN traffic is prioritized (Priority 0-4)

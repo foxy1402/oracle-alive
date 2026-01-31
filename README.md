@@ -12,7 +12,7 @@ Oracle deletes free cloud servers if they're "not being used enough." This scrip
 
 ✅ **Watches Your Server** - Checks how much CPU, RAM, and internet it's using  
 ✅ **Adds Activity When Needed** - Only adds extra work if your server needs it  
-✅ **Stays Above Oracle's Limits** - Keeps all 3 metrics at **30%** (Oracle requires only 15%)  
+✅ **Stays Above Oracle's Limits** - Keeps all 3 metrics at **40%** (Oracle requires only 20%)  
 ✅ **Works Automatically** - Runs in the background 24/7, checks every 5 minutes  
 ✅ **Won't Slow Down Your Apps** - Runs at lowest priority so your VPN/games aren't affected  
 
@@ -20,9 +20,9 @@ Oracle deletes free cloud servers if they're "not being used enough." This scrip
 
 | What Oracle Measures | Danger Zone | Our Target | Safety Margin |
 |---------------------|-------------|------------|---------------|
-| CPU Usage | Below 15% | 30% | **Double!** |
-| RAM Usage | Below 15% | 30% | **Double!** |
-| Network Usage | Below 15% | 30% | **Double!** |
+| CPU Usage | Below 20% | 40% | **Double!** |
+| RAM Usage | Below 20% | 40% | **Double!** |
+| Network Usage | Below 20% | 40% | **Double!** |
 
 **Result:** Your server will **NEVER** be deleted! 🛡️
 
@@ -60,7 +60,7 @@ sudo tail -f /var/log/oracle-keep-alive.log
 
 You should see messages like:
 - "Measuring baseline..." ✓
-- "CPU: Need additional 30%..." ✓
+- "CPU: Need additional 40%..." ✓
 - "All three metrics meeting targets - instance is SAFE" ✓
 
 **Press Ctrl+C to stop watching the log.**
@@ -83,8 +83,8 @@ You should see messages like:
 
 ### After Keep-Alive:
 ```
-✅ CPU: 35% (double what Oracle needs)
-✅ RAM: 35% (double what Oracle needs)
+✅ CPU: 45% (double what Oracle needs)
+✅ RAM: 45% (double what Oracle needs)
 ✅ Network: Active
 🛡️ Result: Server is 100% safe, will NEVER be deleted!
 ```
@@ -104,10 +104,10 @@ sudo nano /etc/default/oracle-keep-alive
 ### Important Settings:
 
 ```bash
-# How high to keep usage (30% = double Oracle's 15% minimum)
-TARGET_CPU_PERCENT=30
-TARGET_MEMORY_PERCENT=30
-TARGET_NETWORK_PERCENT=30
+# How high to keep usage (40% = double Oracle's 20% minimum)
+TARGET_CPU_PERCENT=40
+TARGET_MEMORY_PERCENT=40
+TARGET_NETWORK_PERCENT=40
 
 # Extra safety cushion
 SAFETY_MARGIN=5
@@ -165,8 +165,8 @@ Look for these messages:
 1. Log into Oracle Cloud
 2. Go to: **Compute** → **Instances** → **Your Instance** → **Metrics**
 3. Look at the graphs:
-   - **CPU:** Should show ~35% average ✅
-   - **Memory:** Should show ~35% average ✅
+   - **CPU:** Should show ~45% average ✅
+   - **Memory:** Should show ~45% average ✅
    - **Network:** Should show steady activity ✅
 
 **Wait at least 1 hour after installation for graphs to update.**
@@ -199,7 +199,7 @@ sudo bash install.sh --uninstall
 
 ## 🛠️ Common Problems & Solutions
 
-### Problem: "Metrics still below 30%"
+### Problem: "Metrics still below 40%"
 
 **Solution:**
 ```bash
@@ -249,7 +249,7 @@ sudo journalctl -u oracle-keep-alive -n 50
 ## ❓ Frequently Asked Questions
 
 ### Q: Will Oracle really delete my server?
-**A:** Yes! Oracle's policy states they will delete free servers if CPU, RAM, and Network usage are ALL below 15% for 7 days. Many users have lost servers this way.
+**A:** Yes! Oracle's policy states they will delete free servers if CPU, RAM, and Network usage are ALL below 20% for 7 days. Many users have lost servers this way.
 
 ### Q: Is this safe to use?
 **A:** Absolutely! This script just creates normal computer activity (like browsing the web or running calculations). Oracle allows this.
@@ -277,7 +277,7 @@ After installation, verify:
 
 - [ ] Script is running: `sudo systemctl status oracle-keep-alive`
 - [ ] Logs show "instance is SAFE": `sudo tail -f /var/log/oracle-keep-alive.log`
-- [ ] Oracle Cloud metrics show >30% (check after 1 hour)
+- [ ] Oracle Cloud metrics show >40% (check after 1 hour)
 - [ ] Your VPN/apps still work normally
 
 **All good? You're done! Your server is protected.** 🎉
@@ -302,7 +302,7 @@ After installation, verify:
 
 ## 🌟 Why This Script is the Best
 
-✅ **Triple Protection** - Keeps ALL three metrics above 30% (double Oracle's requirement)  
+✅ **Triple Protection** - Keeps ALL three metrics above 40% (double Oracle's requirement)  
 ✅ **Smart & Efficient** - Only uses resources when needed  
 ✅ **Gaming-Friendly** - Less than 1ms latency impact  
 ✅ **Auto-Adjusting** - Checks and adjusts every 5 minutes  

@@ -6,7 +6,7 @@
 # NEW in v2.1:
 # - Real-time monitoring of CPU, Memory, and Network utilization
 # - Intelligent calculation of additional stress needed
-# - Dynamic adjustment to reach 30% (double minimum) on ALL three metrics
+# - Dynamic adjustment to reach 40% (double minimum) on ALL three metrics
 # - Baseline detection to understand current system load
 # - Smart stress only adds what's needed to reach targets
 #
@@ -22,13 +22,13 @@ VERSION="2.1.0"
 # ============================================================================
 
 # Target utilization levels (percentage)
-# Oracle's minimum is 15%, we target double (30%) for safety margin
-TARGET_CPU_PERCENT="${TARGET_CPU_PERCENT:-30}"
-TARGET_MEMORY_PERCENT="${TARGET_MEMORY_PERCENT:-30}"
-TARGET_NETWORK_PERCENT="${TARGET_NETWORK_PERCENT:-30}"
+# Oracle's minimum is 20%, we target double (40%) for safety margin
+TARGET_CPU_PERCENT="${TARGET_CPU_PERCENT:-40}"
+TARGET_MEMORY_PERCENT="${TARGET_MEMORY_PERCENT:-40}"
+TARGET_NETWORK_PERCENT="${TARGET_NETWORK_PERCENT:-40}"
 
 # Safety margin - how much above target to aim for (in percentage points)
-# Example: If target is 30%, margin of 5 means we aim for 35%
+# Example: If target is 40%, margin of 5 means we aim for 45%
 SAFETY_MARGIN="${SAFETY_MARGIN:-5}"
 
 # Monitoring interval - how often to check and adjust (seconds)
