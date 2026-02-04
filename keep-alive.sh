@@ -50,6 +50,7 @@ MAX_SLEEP_DURATION="${MAX_SLEEP_DURATION:-600}"
 # CPU
 STRESS_CPU="${STRESS_CPU:-1}"
 CPU_WORKERS="${CPU_WORKERS:-}"
+MAX_CPU_STRESS_PERCENT="${MAX_CPU_STRESS_PERCENT:-55}"
 
 # Memory
 STRESS_MEMORY="${STRESS_MEMORY:-1}"
@@ -462,7 +463,16 @@ calculate_required_stress() {
         log_info "  • CPU: Already at ${BASELINE_CPU}% (target: ${target_cpu}%) - NO STRESS NEEDED ✓"
     else
         REQUIRED_CPU_STRESS=$((target_cpu - BASELINE_CPU))
-        log_info "  • CPU: Need additional ${REQUIRED_CPU_STRESS}% (baseline: ${BASELINE_CPU}%, target: ${target_cpu}%)"
+        
+        # Cap CPU stress at MAX_CPU_STRESS_PERCENT to prevent performance spikes
+        # If capped, we'll compensate by running more frequently (shorter sleep)
+        if [[ $REQUIRED_CPU_STRESS -gt $MAX_CPU_STRESS_PERCENT ]]; then
+            log_info "  • CPU: Need ${REQUIRED_CPU_STRESS}% but capping at ${MAX_CPU_STRESS_PERCENT}% to avoid spikes"
+            log_info "  •      Will compensate with MORE FREQUENT cycles (shorter sleep)"
+            REQUIRED_CPU_STRESS=$MAX_CPU_STRESS_PERCENT
+        fi
+        
+        log_info "  • CPU: Adding ${REQUIRED_CPU_STRESS}% stress (baseline: ${BASELINE_CPU}%, target: ${target_cpu}%)"
     fi
     
     # Memory calculation
