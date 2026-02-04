@@ -358,7 +358,8 @@ start_cpu_stress() {
     # Use stress-ng if available, otherwise fallback to basic method
     if command -v stress-ng &> /dev/null; then
         for ((i=0; i<CPU_COUNT; i++)); do
-            nice -n $PROCESS_NICE_LEVEL stress-ng --cpu 1 --cpu-load $CURRENT_CPU_LOAD -t 0 &> /dev/null &
+            # Use very long timeout (1 year = 31536000 seconds) instead of -t 0
+            nice -n $PROCESS_NICE_LEVEL stress-ng --cpu 1 --cpu-load $CURRENT_CPU_LOAD -t 31536000 &> /dev/null &
             CPU_WORKER_PIDS+=($!)
         done
         log_debug "Started ${CPU_COUNT} stress-ng workers at ${CURRENT_CPU_LOAD}% load"
