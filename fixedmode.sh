@@ -358,11 +358,14 @@ start_cpu_stress() {
     # Use stress-ng if available, otherwise fallback to basic method
     if command -v stress-ng &> /dev/null; then
         for ((i=0; i<CPU_COUNT; i++)); do
-            # Use very long timeout (1 year = 31536000 seconds) instead of -t 0
-            nice -n $PROCESS_NICE_LEVEL stress-ng --cpu 1 --cpu-load $CURRENT_CPU_LOAD -t 31536000 &> /dev/null &
+            # Run stress-ng in background
+            # Use very long timeout (1 year = 31536000 seconds) for continuous operation
+            nohup nice -n $PROCESS_NICE_LEVEL stress-ng --cpu 1 --cpu-load $CURRENT_CPU_LOAD -t 31536000 --quiet &>/dev/null &
             CPU_WORKER_PIDS+=($!)
+            # Give it a moment to start
+            sleep 0.1
         done
-        log_debug "Started ${CPU_COUNT} stress-ng workers at ${CURRENT_CPU_LOAD}% load"
+        log_debug "Started ${CPU_COUNT} stress-ng workers at ${CURRENT_CPU_LOAD}% load (PIDs: ${CPU_WORKER_PIDS[*]})"
     else
         # Fallback: Simple yes loop with CPU limit via timeout
         # This is more reliable than complex timing loops
