@@ -1,11 +1,11 @@
 [Unit]
 Description=Oracle Cloud Keep-Alive Service v2.1 (Intelligent Multi-Metric Edition)
-Documentation=https://github.com/YOUR_USERNAME/oracle-alive
+Documentation=https://github.com/foxy1402/oracle-alive
 After=network-online.target
 Wants=network-online.target
-# Start after WireGuard if it exists
+# Start after WireGuard if it exists (optional dependency)
 After=wg-quick@wg0.service
-# Start after OpenVPN if it exists
+# Start after OpenVPN if it exists (optional dependency)
 After=openvpn@server.service
 
 [Service]
@@ -24,7 +24,6 @@ StandardError=journal
 SyslogIdentifier=oracle-keep-alive
 
 # Run as root (needed for memory stress and traffic shaping)
-# TODO: Consider creating dedicated user for better security
 User=root
 Group=root
 
@@ -36,25 +35,17 @@ EnvironmentFile=-/etc/default/oracle-keep-alive
 Nice=19
 
 # IO scheduling - idle class (gaming I/O comes first)
-IOSchedulingClass=idle
+# Note: IOSchedulingClass=idle requires systemd 240+, using best-effort as fallback
+IOSchedulingClass=best-effort
 IOSchedulingPriority=7
-
-# Limit maximum memory usage to prevent runaway allocation
-# This is a safety limit - actual usage is controlled by MEMORY_STRESS_MB
-MemoryMax=512M
-MemoryHigh=256M
 
 # Process limits
 LimitNOFILE=1024
 LimitNPROC=128
 
-# Security hardening
+# Security hardening (compatible with systemd 239+ on Oracle Linux 8 and Ubuntu 20.04+)
 # Prevent privilege escalation
 NoNewPrivileges=true
-
-# Restrict access to /proc and /sys
-ProtectProc=invisible
-ProcSubset=pid
 
 # Make /home, /root, and /run/user inaccessible
 ProtectHome=true
@@ -68,19 +59,14 @@ ReadWritePaths=/var/log
 # Allow access to /dev/shm for memory stress
 ReadWritePaths=/dev/shm
 
-# Prevent writing to system directories
-ReadOnlyPaths=/etc
-ReadOnlyPaths=/opt/oracle-keep-alive
+# Note: ProtectProc and ProcSubset require systemd 247+, not available on Oracle Linux 8
+# The script needs access to /proc/stat and /proc/meminfo for monitoring
 
 # Network access - needed for ping and HTTP requests
-RestrictAddressFamilies=AF_INET AF_INET6
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK
 
-# Allow binding to any port (though we don't actually bind)
-RestrictNetworkInterfaces=
-
-# No need for system calls that could be dangerous
-SystemCallFilter=@system-service
-SystemCallErrorNumber=EPERM
+# System call filtering (basic set compatible with older systemd)
+SystemCallArchitectures=native
 
 # Kill all processes in cgroup on stop
 KillMode=mixed

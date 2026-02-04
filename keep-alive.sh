@@ -161,10 +161,34 @@ detect_system() {
     TOTAL_MEMORY_KB=$(grep MemTotal /proc/meminfo 2>/dev/null | awk '{print $2}' || echo "1048576")
     TOTAL_MEMORY_MB=$((TOTAL_MEMORY_KB / 1024))
     
+    # Detect OS for logging
+    local os_name="Unknown"
+    if [[ -f /etc/os-release ]]; then
+        os_name=$(grep '^PRETTY_NAME=' /etc/os-release | cut -d'"' -f2)
+    fi
+    
     # Detect primary network interface (exclude lo)
-    PRIMARY_INTERFACE=$(ip route get 8.8.8.8 2>/dev/null | grep -oP 'dev \K\S+' || echo "eth0")
+    # Use portable method that works on Oracle Linux 8 and Ubuntu
+    PRIMARY_INTERFACE=$(ip route get 8.8.8.8 2>/dev/null | awk '/dev/ {for(i=1;i<=NF;i++) if($i=="dev") print $(i+1)}' | head -1)
+    
+    # Fallback: find first non-loopback interface that is UP
+    if [[ -z "$PRIMARY_INTERFACE" ]] || [[ ! -d "/sys/class/net/${PRIMARY_INTERFACE}" ]]; then
+        PRIMARY_INTERFACE=$(ip -o link show 2>/dev/null | awk -F': ' '!/lo:/ && /state UP/ {print $2; exit}')
+    fi
+    
+    # Final fallback: find any non-loopback interface
+    if [[ -z "$PRIMARY_INTERFACE" ]] || [[ ! -d "/sys/class/net/${PRIMARY_INTERFACE}" ]]; then
+        PRIMARY_INTERFACE=$(ls /sys/class/net/ 2>/dev/null | grep -v '^lo$' | head -1)
+    fi
+    
+    # Ultimate fallback
+    if [[ -z "$PRIMARY_INTERFACE" ]]; then
+        PRIMARY_INTERFACE="eth0"
+        log_warn "Could not detect network interface, defaulting to eth0"
+    fi
     
     log_info "System detected:"
+    log_info "  • OS: ${os_name}"
     log_info "  • CPU cores: ${CPU_COUNT}"
     log_info "  • Total RAM: ${TOTAL_MEMORY_MB}MB"
     log_info "  • Primary network interface: ${PRIMARY_INTERFACE}"
@@ -185,22 +209,47 @@ detect_system() {
 # ============================================================================
 
 get_cpu_usage() {
-    # Get instantaneous CPU usage from /proc/stat
+    # Get USER CPU usage by measuring delta between two /proc/stat readings
+    # CRITICAL: Oracle only counts USER + NICE time, NOT system/kernel time
+    # This matches Oracle's monitoring methodology
     if [[ ! -f /proc/stat ]]; then
         echo "0"
         return
     fi
     
-    local cpu_line
-    cpu_line=$(head -1 /proc/stat)
-    local user nice system idle iowait irq softirq
-    read -r _ user nice system idle iowait irq softirq _ <<< "$cpu_line"
+    # First reading
+    local cpu_line1
+    cpu_line1=$(head -1 /proc/stat)
+    local user1 nice1 system1 idle1 iowait1 irq1 softirq1
+    read -r _ user1 nice1 system1 idle1 iowait1 irq1 softirq1 _ <<< "$cpu_line1"
     
-    local total=$((user + nice + system + idle + iowait + irq + softirq))
-    local used=$((user + nice + system + irq + softirq))
+    # Wait 1 second
+    sleep 1
     
-    if [[ $total -gt 0 ]]; then
-        echo $((used * 100 / total))
+    # Second reading
+    local cpu_line2
+    cpu_line2=$(head -1 /proc/stat)
+    local user2 nice2 system2 idle2 iowait2 irq2 softirq2
+    read -r _ user2 nice2 system2 idle2 iowait2 irq2 softirq2 _ <<< "$cpu_line2"
+    
+    # Calculate deltas
+    local user_delta=$((user2 - user1))
+    local nice_delta=$((nice2 - nice1))
+    local system_delta=$((system2 - system1))
+    local idle_delta=$((idle2 - idle1))
+    local iowait_delta=$((iowait2 - iowait1))
+    local irq_delta=$((irq2 - irq1))
+    local softirq_delta=$((softirq2 - softirq1))
+    
+    # Total delta includes everything (for percentage calculation)
+    local total_delta=$((user_delta + nice_delta + system_delta + idle_delta + iowait_delta + irq_delta + softirq_delta))
+    
+    # IMPORTANT: Only count USER + NICE (user space workload)
+    # DO NOT count system, irq, softirq - Oracle doesn't monitor these
+    local used_delta=$((user_delta + nice_delta))
+    
+    if [[ $total_delta -gt 0 ]]; then
+        echo $((used_delta * 100 / total_delta))
     else
         echo "0"
     fi
@@ -208,14 +257,24 @@ get_cpu_usage() {
 
 get_cpu_usage_average() {
     # Get average CPU usage over a period
+    # Note: Each get_cpu_usage() call takes ~1 second internally
     local duration=${1:-10}
-    local samples=10
+    local samples
+    
+    # Adjust samples based on duration (each sample takes ~1s due to delta measurement)
+    if [[ $duration -lt 5 ]]; then
+        samples=3
+    elif [[ $duration -lt 15 ]]; then
+        samples=5
+    else
+        samples=10
+    fi
+    
     local total=0
     
     for ((i=0; i<samples; i++)); do
         local usage=$(get_cpu_usage)
         total=$((total + usage))
-        sleep $(awk "BEGIN {printf \"%.2f\", $duration / $samples}")
     done
     
     echo $((total / samples))
@@ -227,9 +286,65 @@ get_memory_usage_percent() {
         return
     fi
     
-    local mem_info
-    mem_info=$(free | grep "^Mem:" | awk '{printf "%.0f", ($3/$2)*100}')
-    echo "$mem_info"
+    # IMPORTANT: Oracle monitors actual used memory (excluding buffers/cache)
+    # The "available" memory calculation in modern free command handles this
+    # Formula: (Total - Available) / Total = actual application usage
+    
+    # Parse free output - works on both old and new versions
+    local free_output
+    free_output=$(free 2>/dev/null)
+    
+    if [[ -z "$free_output" ]]; then
+        echo "0"
+        return
+    fi
+    
+    local total
+    local available
+    
+    # Try to get total and available from free output
+    total=$(echo "$free_output" | awk '/^Mem:/ {print $2}')
+    
+    # Check if column 7 exists (available) - modern free has it
+    local col_count
+    col_count=$(echo "$free_output" | awk '/^Mem:/ {print NF}')
+    
+    if [[ "$col_count" -ge 7 ]]; then
+        # Modern free with 'available' column
+        available=$(echo "$free_output" | awk '/^Mem:/ {print $7}')
+    else
+        # Old free format: calculate available = free + buffers + cached
+        local mem_free
+        local buffers
+        local cached
+        mem_free=$(echo "$free_output" | awk '/^Mem:/ {print $4}')
+        buffers=$(echo "$free_output" | awk '/^Mem:/ {print $6}')
+        cached=$(echo "$free_output" | awk '/^Mem:/ {print $7}' 2>/dev/null || echo "0")
+        
+        # Handle case where cached might be in a different row
+        if [[ -z "$cached" ]] || [[ "$cached" == "0" ]]; then
+            cached=$(echo "$free_output" | awk '/^-\/\+ buffers/ {print $4}' 2>/dev/null || echo "0")
+        fi
+        
+        available=$((mem_free + buffers + cached))
+    fi
+    
+    # Validate values
+    if [[ -z "$total" ]] || [[ "$total" -le 0 ]]; then
+        echo "0"
+        return
+    fi
+    
+    if [[ -z "$available" ]]; then
+        available=0
+    fi
+    
+    local used_real=$((total - available))
+    if [[ $used_real -lt 0 ]]; then
+        used_real=0
+    fi
+    
+    echo $(( (used_real * 100) / total ))
 }
 
 get_network_usage_kbs() {
@@ -259,7 +374,9 @@ get_network_usage_percent() {
     # 100 Mbps = 12,500 KB/s
     local max_kbs=12500
     local current_kbs=$(get_network_usage_kbs)
-    local percent=$(awk "BEGIN {printf \"%.0f\", ($current_kbs / $max_kbs) * 100}")
+    
+    # Use pure bash arithmetic
+    local percent=$((current_kbs * 100 / max_kbs))
     
     # Cap at 100%
     if [[ $percent -gt 100 ]]; then
@@ -276,8 +393,15 @@ get_network_usage_percent() {
 measure_baseline() {
     log_info "================================================"
     log_info "Measuring baseline system utilization..."
+    log_info "IMPORTANT: Only measuring USER applications (Oracle's monitoring methodology)"
+    log_info "Excluding: System processes, kernel time, buffers/cache"
     log_info "Observing for ${BASELINE_DURATION}s to understand normal load"
     log_info "================================================"
+    
+    # CRITICAL: Ensure no stress processes are running from previous cycles
+    # This baseline must reflect ONLY user applications (what Oracle monitors)
+    pkill -P $$ 2>/dev/null || true
+    sleep 2  # Let any remaining processes fully exit
     
     local samples=6
     local sample_interval=$((BASELINE_DURATION / samples))
@@ -309,9 +433,9 @@ measure_baseline() {
     BASELINE_NETWORK_KB=$((net_total / samples))
     
     log_info "================================================"
-    log_info "Baseline metrics established:"
-    log_info "  • CPU: ${BASELINE_CPU}%"
-    log_info "  • Memory: ${BASELINE_MEMORY}%"
+    log_info "Baseline metrics established (USER workload only):"
+    log_info "  • CPU: ${BASELINE_CPU}% (user+nice time only)"
+    log_info "  • Memory: ${BASELINE_MEMORY}% (excluding buffers/cache)"
     log_info "  • Network: ${BASELINE_NETWORK_KB} KB/s"
     log_info "================================================"
     
@@ -345,7 +469,8 @@ calculate_required_stress() {
         log_info "  • Memory: Already at ${BASELINE_MEMORY}% (target: ${target_memory}%) - NO STRESS NEEDED ✓"
     else
         local additional_percent=$((target_memory - BASELINE_MEMORY))
-        REQUIRED_MEMORY_STRESS_MB=$(awk "BEGIN {printf \"%.0f\", ($TOTAL_MEMORY_MB * $additional_percent) / 100}")
+        # Use pure bash arithmetic instead of awk for portability
+        REQUIRED_MEMORY_STRESS_MB=$((TOTAL_MEMORY_MB * additional_percent / 100))
         
         # Cap at reasonable maximum (50% of total RAM)
         local max_stress_mb=$((TOTAL_MEMORY_MB / 2))
@@ -360,7 +485,8 @@ calculate_required_stress() {
     # For network, we calculate KB/s needed to reach target percentage
     # Assuming 100 Mbps (12,500 KB/s) as baseline network capacity
     local max_network_kbs=12500
-    local target_network_kbs=$(awk "BEGIN {printf \"%.0f\", ($max_network_kbs * $target_network) / 100}")
+    # Use pure bash arithmetic
+    local target_network_kbs=$((max_network_kbs * target_network / 100))
     
     if [[ $BASELINE_NETWORK_KB -ge $target_network_kbs ]]; then
         REQUIRED_NETWORK_STRESS_KBS=0
@@ -381,25 +507,38 @@ calculate_sleep_duration() {
     local stress_level=0
     
     # Calculate overall stress level (0-100)
-    if [[ $REQUIRED_CPU_STRESS -gt 0 ]]; then
+    if [[ $REQUIRED_CPU_STRESS -gt 0 ]] && [[ $TARGET_CPU_PERCENT -gt 0 ]]; then
         stress_level=$((stress_level + (REQUIRED_CPU_STRESS * 100 / TARGET_CPU_PERCENT)))
     fi
     
-    if [[ $REQUIRED_MEMORY_STRESS_MB -gt 0 ]]; then
-        local mem_percent=$(awk "BEGIN {printf \"%.0f\", ($REQUIRED_MEMORY_STRESS_MB * 100) / $TOTAL_MEMORY_MB}")
-        stress_level=$((stress_level + (mem_percent * 100 / TARGET_MEMORY_PERCENT)))
+    if [[ $REQUIRED_MEMORY_STRESS_MB -gt 0 ]] && [[ $TOTAL_MEMORY_MB -gt 0 ]]; then
+        local mem_percent=$((REQUIRED_MEMORY_STRESS_MB * 100 / TOTAL_MEMORY_MB))
+        if [[ $TARGET_MEMORY_PERCENT -gt 0 ]]; then
+            stress_level=$((stress_level + (mem_percent * 100 / TARGET_MEMORY_PERCENT)))
+        fi
     fi
     
-    if [[ $REQUIRED_NETWORK_STRESS_KBS -gt 0 ]]; then
-        local net_percent=$(awk "BEGIN {printf \"%.0f\", ($REQUIRED_NETWORK_STRESS_KBS * 100) / 12500}")
+    if [[ $REQUIRED_NETWORK_STRESS_KBS -gt 0 ]] && [[ $TARGET_NETWORK_PERCENT -gt 0 ]]; then
+        local net_percent=$((REQUIRED_NETWORK_STRESS_KBS * 100 / 12500))
         stress_level=$((stress_level + (net_percent * 100 / TARGET_NETWORK_PERCENT)))
     fi
     
     stress_level=$((stress_level / 3))  # Average of three metrics
     
+    # Cap stress level at 100
+    if [[ $stress_level -gt 100 ]]; then
+        stress_level=100
+    fi
+    
     # Inverse relationship: more stress needed = less sleep
     # stress_level 0-100 maps to MAX_SLEEP_DURATION down to MIN_SLEEP_DURATION
-    CURRENT_SLEEP_DURATION=$(awk "BEGIN {printf \"%.0f\", $MAX_SLEEP_DURATION - (($MAX_SLEEP_DURATION - $MIN_SLEEP_DURATION) * $stress_level / 100)}")
+    local sleep_range=$((MAX_SLEEP_DURATION - MIN_SLEEP_DURATION))
+    CURRENT_SLEEP_DURATION=$((MAX_SLEEP_DURATION - (sleep_range * stress_level / 100)))
+    
+    # Ensure minimum sleep duration
+    if [[ $CURRENT_SLEEP_DURATION -lt $MIN_SLEEP_DURATION ]]; then
+        CURRENT_SLEEP_DURATION=$MIN_SLEEP_DURATION
+    fi
     
     log_info "Calculated stress level: ${stress_level}% → Sleep duration: ${CURRENT_SLEEP_DURATION}s"
 }
@@ -420,18 +559,29 @@ stress_cpu_intelligent() {
     local end_time=$((SECONDS + STRESS_DURATION))
     local pids=()
     
-    # Calculate work/sleep ratio for target CPU percentage
-    local work_sleep=$(awk "BEGIN {printf \"%.4f\", (100 - $REQUIRED_CPU_STRESS) / 1000}")
+    # Calculate iterations before each microsleep
+    # Higher CPU stress = more iterations (more work, less sleep)
+    # Lower CPU stress = fewer iterations (less work, more sleep)
+    local iterations=$((REQUIRED_CPU_STRESS * 50))  # 0-5000 based on stress needed
+    if [[ $iterations -lt 100 ]]; then
+        iterations=100
+    fi
+    if [[ $iterations -gt 5000 ]]; then
+        iterations=5000
+    fi
     
     for ((i = 0; i < CPU_WORKERS; i++)); do
         (
             renice -n "$PROCESS_NICE_LEVEL" $$ >/dev/null 2>&1 || true
             
             while [[ $SECONDS -lt $end_time ]]; do
-                for ((j = 0; j < 5000; j++)); do
+                # CPU-bound work
+                for ((j = 0; j < iterations; j++)); do
                     : $((j * j * j % 7919))
                 done
-                sleep "$work_sleep" 2>/dev/null || sleep 0.01
+                # Minimal sleep to allow other processes - use integer sleep with /dev/null trick
+                # This is a no-op sleep that yields CPU briefly
+                read -t 0.01 -N 0 2>/dev/null || true
             done
         ) &
         pids+=($!)
@@ -457,13 +607,34 @@ stress_memory_intelligent() {
     local start_time=$SECONDS
     local temp_file="/dev/shm/oracle-keep-alive-$$"
     
-    # Safety check
-    local free_memory_mb=$(free -m | grep "^Mem:" | awk '{print $7}')
+    # Safety check - get available memory (works on old and new free versions)
+    local free_memory_mb
+    local col_count
+    col_count=$(free -m 2>/dev/null | awk '/^Mem:/ {print NF}')
+    
+    if [[ "$col_count" -ge 7 ]]; then
+        free_memory_mb=$(free -m 2>/dev/null | awk '/^Mem:/ {print $7}')
+    else
+        # Fallback: use free + buffers
+        free_memory_mb=$(free -m 2>/dev/null | awk '/^Mem:/ {print $4 + $6}')
+    fi
+    
+    # Default if detection fails
+    if [[ -z "$free_memory_mb" ]] || [[ "$free_memory_mb" -le 0 ]]; then
+        free_memory_mb=100
+    fi
+    
     local memory_mb=$REQUIRED_MEMORY_STRESS_MB
     
     if [[ $memory_mb -gt $free_memory_mb ]]; then
         log_warn "Not enough free memory (${free_memory_mb}MB), reducing to ${free_memory_mb}MB"
         memory_mb=$free_memory_mb
+    fi
+    
+    # Ensure we have at least some memory to allocate
+    if [[ $memory_mb -le 0 ]]; then
+        log_warn "No memory available for stress test"
+        return
     fi
     
     if dd if=/dev/urandom of="$temp_file" bs=1M count="$memory_mb" 2>/dev/null; then
@@ -476,6 +647,7 @@ stress_memory_intelligent() {
         log_info "Memory stress completed (${elapsed}s)"
     else
         log_error "Memory stress failed"
+        rm -f "$temp_file" 2>/dev/null || true
     fi
 }
 
@@ -492,11 +664,14 @@ stress_network_intelligent() {
     local http_targets_array=($NETWORK_HTTP_TARGETS)
     
     # 1. Distributed pings (parallel for efficiency)
-    if [[ "$NETWORK_USE_DISTRIBUTED_TARGETS" == "1" ]]; then
+    # Note: ping -i < 0.2 requires root, and some systems don't support decimals
+    if [[ "$NETWORK_USE_DISTRIBUTED_TARGETS" == "1" ]] && command -v ping &> /dev/null; then
         for target in "${targets_array[@]}"; do
             (
                 renice -n "$PROCESS_NICE_LEVEL" $$ >/dev/null 2>&1 || true
-                ping -c "$NETWORK_PINGS_PER_TARGET" -i "$NETWORK_PING_INTERVAL" -W 2 "$target" > /dev/null 2>&1 || true
+                # Use -i 1 for maximum compatibility (works on all systems)
+                # Running in parallel compensates for the slower interval
+                ping -c "$NETWORK_PINGS_PER_TARGET" -i 1 -W 2 "$target" > /dev/null 2>&1 || true
             ) &
         done
         wait
@@ -510,7 +685,10 @@ stress_network_intelligent() {
                 renice -n "$PROCESS_NICE_LEVEL" $$ >/dev/null 2>&1 || true
                 curl -s -m "$NETWORK_HTTP_TIMEOUT" -o /dev/null "$target" 2>/dev/null || true
             ) &
-            sleep 0.2
+            # Use integer sleep for compatibility
+            if [[ $((i % 5)) -eq 0 ]]; then
+                sleep 1
+            fi
         done
         wait
     fi
@@ -570,7 +748,8 @@ monitor_and_adjust() {
         log_info "  ✓ Memory target met"
     fi
     
-    local target_network_kbs=$(awk "BEGIN {printf \"%.0f\", (12500 * $target_network) / 100}")
+    # Use pure bash arithmetic
+    local target_network_kbs=$((12500 * target_network / 100))
     if [[ $CURRENT_NETWORK_KB -lt $target_network_kbs ]]; then
         log_warn "  ⚠ Network below target"
         all_targets_met=0
@@ -599,7 +778,8 @@ show_comprehensive_stats() {
     # Current metrics
     local cpu=$(get_cpu_usage)
     local mem=$(get_memory_usage_percent)
-    local mem_info=$(free -m | grep "^Mem:" | awk '{printf "%s/%sMB", $3, $2}')
+    local mem_info
+    mem_info=$(free -m 2>/dev/null | awk '/^Mem:/ {printf "%s/%sMB", $3, $2}' || echo "N/A")
     local net=$(get_network_usage_kbs)
     
     log_info "Current instantaneous metrics:"
@@ -609,10 +789,11 @@ show_comprehensive_stats() {
     log_info ""
     
     # Baseline vs Target
+    local target_net_kbs=$((12500 * (TARGET_NETWORK_PERCENT + SAFETY_MARGIN) / 100))
     log_info "Baseline → Current → Target:"
     log_info "  • CPU: ${BASELINE_CPU}% → ${CURRENT_CPU}% → $((TARGET_CPU_PERCENT + SAFETY_MARGIN))%"
     log_info "  • Memory: ${BASELINE_MEMORY}% → ${CURRENT_MEMORY}% → $((TARGET_MEMORY_PERCENT + SAFETY_MARGIN))%"
-    log_info "  • Network: ${BASELINE_NETWORK_KB} KB/s → ${CURRENT_NETWORK_KB} KB/s → $(awk "BEGIN {printf \"%.0f\", (12500 * (TARGET_NETWORK_PERCENT + SAFETY_MARGIN)) / 100}") KB/s"
+    log_info "  • Network: ${BASELINE_NETWORK_KB} KB/s → ${CURRENT_NETWORK_KB} KB/s → ${target_net_kbs} KB/s"
     log_info ""
     
     # Stress statistics
@@ -622,8 +803,9 @@ show_comprehensive_stats() {
     log_info "  • Network stress time: ${TOTAL_NETWORK_STRESS_TIME}s"
     log_info ""
     
-    # System info
-    local uptime_str=$(uptime -p 2>/dev/null || uptime | cut -d',' -f1)
+    # System info - uptime -p not available on Oracle Linux 8
+    local uptime_str
+    uptime_str=$(uptime -p 2>/dev/null) || uptime_str=$(uptime | sed 's/.*up /up /' | cut -d',' -f1-2)
     log_info "System uptime: $uptime_str"
     log_info "Current sleep duration: ${CURRENT_SLEEP_DURATION}s"
     log_info "================================================"
@@ -673,12 +855,22 @@ main() {
             show_comprehensive_stats
         fi
         
-        # Sleep
-        log_info "Sleeping for ${CURRENT_SLEEP_DURATION}s... (next cycle in $((CURRENT_SLEEP_DURATION / 60))m)"
+        # Sleep (ensure minimum of 60 seconds)
+        if [[ $CURRENT_SLEEP_DURATION -lt 60 ]]; then
+            CURRENT_SLEEP_DURATION=60
+        fi
+        
+        local sleep_minutes=$((CURRENT_SLEEP_DURATION / 60))
+        log_info "Sleeping for ${CURRENT_SLEEP_DURATION}s... (next cycle in ${sleep_minutes}m)"
         sleep "$CURRENT_SLEEP_DURATION"
         
-        # Monitor and adjust if needed
-        if [[ $((CYCLE_COUNT % (MONITORING_INTERVAL / CURRENT_SLEEP_DURATION))) -eq 0 ]]; then
+        # Monitor and adjust if needed (avoid division by zero)
+        local monitor_interval=$((MONITORING_INTERVAL / CURRENT_SLEEP_DURATION))
+        if [[ $monitor_interval -lt 1 ]]; then
+            monitor_interval=1
+        fi
+        
+        if [[ $((CYCLE_COUNT % monitor_interval)) -eq 0 ]]; then
             monitor_and_adjust
         fi
     done

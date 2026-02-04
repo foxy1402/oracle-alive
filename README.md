@@ -1,327 +1,308 @@
-# Oracle Cloud Keep-Alive v2.1 🎮🔄
+# Oracle Cloud Keep-Alive
 
-**Keep Your Free Oracle Cloud Server Running Forever!**
+**Keep your free Oracle Cloud server running forever - prevents automatic deletion due to low usage.**
 
-> **For Non-Tech Users:** This script automatically keeps your free Oracle Cloud server active so Oracle doesn't delete it. Perfect for VPN servers, game servers, or any 24/7 service.
-
-## 🎯 What Does This Do?
-
-Oracle deletes free cloud servers if they're "not being used enough." This script makes sure Oracle always thinks your server is being used, so it **never gets deleted**.
-
-### How It Protects You:
-
-✅ **Watches Your Server** - Checks how much CPU, RAM, and internet it's using  
-✅ **Adds Activity When Needed** - Only adds extra work if your server needs it  
-✅ **Stays Above Oracle's Limits** - Keeps all 3 metrics at **40%** (Oracle requires only 20%)  
-✅ **Works Automatically** - Runs in the background 24/7, checks every 5 minutes  
-✅ **Won't Slow Down Your Apps** - Runs at lowest priority so your VPN/games aren't affected  
-
-### Safety Levels:
-
-| What Oracle Measures | Danger Zone | Our Target | Safety Margin |
-|---------------------|-------------|------------|---------------|
-| CPU Usage | Below 20% | 40% | **Double!** |
-| RAM Usage | Below 20% | 40% | **Double!** |
-| Network Usage | Below 20% | 40% | **Double!** |
-
-**Result:** Your server will **NEVER** be deleted! 🛡️
+Works on Oracle Linux and Ubuntu (both x86_64 and ARM instances).
 
 ---
 
-## 🚀 Super Simple Installation (3 Steps!)
+## What Does This Do?
 
-### Step 1: Download to Your Server
+Oracle deletes free-tier instances if CPU, memory, and network usage are **all below 20%** for 7 consecutive days.
 
-**On your Oracle Cloud server, run these commands:**
+This script:
+- ✅ Monitors your actual usage (only what Oracle monitors)
+- ✅ Adds just enough activity to keep **all 3 metrics above 40%** (double the requirement)
+- ✅ Runs automatically 24/7 in the background
+- ✅ Won't interfere with your apps (lowest priority)
 
+**Result: Your instance will never be deleted.**
+
+---
+
+## Installation
+
+### Step 1: Download
+
+**Oracle Linux:**
 ```bash
-# Install Git first (if not installed)
-sudo apt update && sudo apt install git -y   # Ubuntu/Debian
-# OR
-sudo yum install git -y                      # Oracle Linux
-
+sudo yum install git -y
 git clone https://github.com/foxy1402/oracle-alive.git
 cd oracle-alive
 ```
 
-### Step 2: Install (One Command!)
+**Ubuntu:**
+```bash
+sudo apt update && sudo apt install git -y
+git clone https://github.com/foxy1402/oracle-alive.git
+cd oracle-alive
+```
+
+### Step 2: Install
 
 ```bash
 sudo bash install.sh
 ```
 
-That's it! The script is now running and protecting your server.
+That's it! The script is now running.
 
-### Step 3: Check It's Working
-
-```bash
-sudo tail -f /var/log/oracle-keep-alive.log
-```
-
-You should see messages like:
-- "Measuring baseline..." ✓
-- "CPU: Need additional 40%..." ✓
-- "All three metrics meeting targets - instance is SAFE" ✓
-
-**Press Ctrl+C to stop watching the log.**
-
----
-
-## 📊 Real-World Example (Simple)
-
-### Your Situation:
-- You're running a gaming VPN on Oracle Cloud
-- You're worried Oracle will delete your server
-
-### Before Keep-Alive:
-```
-❌ CPU: 5% (too low - Oracle might delete!)
-❌ RAM: 10% (too low - Oracle might delete!)
-❌ Network: Low activity
-📧 Risk: Oracle could delete your server in 7 days
-```
-
-### After Keep-Alive:
-```
-✅ CPU: 45% (double what Oracle needs)
-✅ RAM: 45% (double what Oracle needs)
-✅ Network: Active
-🛡️ Result: Server is 100% safe, will NEVER be deleted!
-```
-
----
-
-## ⚙️ Settings (Optional - Already Configured!)
-
-**You don't need to change these!** The script is pre-configured with safe defaults.
-
-But if you want to customize:
-
-```bash
-sudo nano /etc/default/oracle-keep-alive
-```
-
-### Important Settings:
-
-```bash
-# How high to keep usage (40% = double Oracle's 20% minimum)
-TARGET_CPU_PERCENT=40
-TARGET_MEMORY_PERCENT=40
-TARGET_NETWORK_PERCENT=40
-
-# Extra safety cushion
-SAFETY_MARGIN=5
-
-# For gaming VPN: Max internet speed used by script (won't affect your games)
-NETWORK_BANDWIDTH_LIMIT_KBS=500  # That's only 4 Mbps
-```
-
-**After changing settings:**
-```bash
-sudo systemctl restart oracle-keep-alive
-```
-
----
-
-## 🎮 Will This Slow Down My VPN or Games?
-
-### Short Answer: NO!
-
-**Impact on your gaming:**
-- Latency increase: +1ms (you won't notice it)
-- Your game traffic: Priority #1
-- Keep-alive traffic: Priority #7 (lowest)
-
-### How It Stays Out of Your Way:
-
-1. **Smart Detection** - Knows when you're gaming, reduces background activity
-2. **Low Priority** - Gaming data always goes first
-3. **Speed Limit** - Only uses up to 4 Mbps (you probably have 100+ Mbps)
-4. **CPU Priority** - Runs at "nice=19" (lowest CPU priority)
-
-**Tested with:** CS:GO, Valorant, League of Legends, Fortnite
-**Result:** Zero noticeable impact
-
----
-
-## 📊 How to Check If It's Working
-
-### Option 1: Check Logs (Easiest)
+### Step 3: Verify
 
 ```bash
 sudo tail -f /var/log/oracle-keep-alive.log
 ```
 
-Look for these messages:
+You should see:
 ```
-✓ CPU target met
-✓ Memory target met  
-✓ Network target met
-✓ All three metrics meeting targets - instance is SAFE
+[INFO] Detected OS: Ubuntu 22.04.3 LTS  (or Oracle Linux Server 8.x)
+[INFO] Baseline metrics established (USER workload only):
+[INFO]   • CPU: 5-15% (user+nice time only)
+[INFO]   • Memory: 10-20% (excluding buffers/cache)
+[INFO]   • Network: 50-500 KB/s
+[INFO] ✓ All three metrics meeting targets - instance is SAFE
 ```
 
-### Option 2: Check Oracle Cloud Console
-
-1. Log into Oracle Cloud
-2. Go to: **Compute** → **Instances** → **Your Instance** → **Metrics**
-3. Look at the graphs:
-   - **CPU:** Should show ~45% average ✅
-   - **Memory:** Should show ~45% average ✅
-   - **Network:** Should show steady activity ✅
-
-**Wait at least 1 hour after installation for graphs to update.**
+Press `Ctrl+C` to exit.
 
 ---
 
-## 🔧 Useful Commands
+## Supported Systems
+
+| Operating System | x86_64 | ARM (aarch64) |
+|------------------|--------|---------------|
+| Oracle Linux 8/9 | ✅ | ✅ |
+| Ubuntu 20.04 LTS | ✅ | ✅ |
+| Ubuntu 22.04 LTS | ✅ | ✅ |
+| Ubuntu Minimal   | ✅ | ✅ |
+
+---
+
+## Common Commands
 
 ```bash
-# Check if it's running
+# Check status
 sudo systemctl status oracle-keep-alive
 
-# View live logs
+# View logs
 sudo tail -f /var/log/oracle-keep-alive.log
 
-# Stop it
+# Stop/start
 sudo systemctl stop oracle-keep-alive
-
-# Start it again
 sudo systemctl start oracle-keep-alive
 
-# Restart it (after changing settings)
+# Restart (after config changes)
 sudo systemctl restart oracle-keep-alive
 
-# Remove it completely
+# Uninstall
 sudo bash install.sh --uninstall
 ```
 
 ---
 
-## 🛠️ Common Problems & Solutions
+## Configuration (Optional)
 
-### Problem: "Metrics still below 40%"
+Default settings work for 99% of users. To customize:
 
-**Solution:**
 ```bash
-# Check the logs to see what's happening
-sudo tail -100 /var/log/oracle-keep-alive.log
-
-# Make sure all features are enabled
 sudo nano /etc/default/oracle-keep-alive
+```
 
-# Look for these lines and make sure they say "=1":
+**Key settings:**
+- `TARGET_CPU_PERCENT=40` - Target CPU usage (default: 40%)
+- `TARGET_MEMORY_PERCENT=40` - Target memory usage (default: 40%)
+- `TARGET_NETWORK_PERCENT=40` - Target network usage (default: 40%)
+
+After changing settings:
+```bash
+sudo systemctl restart oracle-keep-alive
+```
+
+---
+
+## How It Works
+
+### Oracle's Policy
+
+Oracle monitors 3 metrics:
+1. **CPU** (user+nice time only - NOT system/kernel)
+2. **Memory** (application memory - NOT buffers/cache)  
+3. **Network** (total traffic)
+
+If **ALL THREE** stay below 20% for 7 days → instance deleted.
+
+### Our Strategy
+
+1. **Measure baseline** - What your apps currently use
+2. **Calculate gap** - How much more needed to reach 40% on each metric
+3. **Add smart stress** - Only what's needed, nothing wasted
+4. **Monitor continuously** - Adjusts every 5 minutes
+5. **Runs at lowest priority** - Won't slow down your apps
+
+**Target: 40% on all metrics = Double Oracle's requirement = Safe forever**
+
+---
+
+## Verification
+
+### Check Logs (Immediate)
+
+```bash
+sudo tail -100 /var/log/oracle-keep-alive.log
+```
+
+Look for:
+- ✅ Baseline CPU: 5-15% (not 0%)
+- ✅ Baseline Memory: 10-30%
+- ✅ Baseline Network: 50-500 KB/s (not 0)
+- ✅ "All three metrics meeting targets - instance is SAFE"
+
+### Check Oracle Cloud Console (After 1 Hour)
+
+1. Login to [Oracle Cloud Console](https://cloud.oracle.com)
+2. Go to: **Compute** → **Instances** → **Your Instance** → **Metrics**
+3. Verify all 3 graphs show activity above 40%
+
+---
+
+## Troubleshooting
+
+### Problem: Metrics still below 40%
+
+**Check logs:**
+```bash
+sudo tail -100 /var/log/oracle-keep-alive.log
+```
+
+**Ensure all stress types enabled:**
+```bash
+sudo nano /etc/default/oracle-keep-alive
+```
+
+Verify these are set to `1`:
+```bash
 STRESS_CPU=1
 STRESS_MEMORY=1
 STRESS_NETWORK=1
+```
 
-# Save (Ctrl+X, then Y, then Enter)
-# Restart the script
+**Restart:**
+```bash
 sudo systemctl restart oracle-keep-alive
 ```
 
-### Problem: "My games are lagging"
+### Problem: Service won't start
 
-**Solution:**
 ```bash
-# Reduce network usage
-sudo nano /etc/default/oracle-keep-alive
-
-# Change this line:
-NETWORK_BANDWIDTH_LIMIT_KBS=200
-
-# Save and restart
-sudo systemctl restart oracle-keep-alive
-```
-
-### Problem: "Script isn't running"
-
-**Solution:**
-```bash
-# Start it
-sudo systemctl start oracle-keep-alive
-
 # Check for errors
 sudo journalctl -u oracle-keep-alive -n 50
+
+# Verify files exist
+ls -la /opt/oracle-keep-alive/keep-alive.sh
+ls -la /etc/systemd/system/oracle-keep-alive.service
+
+# Reinstall
+cd oracle-alive
+sudo bash install.sh
+```
+
+### Problem: Baseline shows 0% for CPU or Network
+
+This was a bug in older versions. Update to latest:
+```bash
+cd oracle-alive
+git pull
+sudo systemctl stop oracle-keep-alive
+sudo bash install.sh
+sudo systemctl start oracle-keep-alive
 ```
 
 ---
 
-## ❓ Frequently Asked Questions
+## FAQ
 
-### Q: Will Oracle really delete my server?
-**A:** Yes! Oracle's policy states they will delete free servers if CPU, RAM, and Network usage are ALL below 20% for 7 days. Many users have lost servers this way.
+**Q: Will this use my free tier limits?**  
+A: No. It only uses CPU/RAM/Network on your existing instance. No additional resources consumed.
 
-### Q: Is this safe to use?
-**A:** Absolutely! This script just creates normal computer activity (like browsing the web or running calculations). Oracle allows this.
+**Q: Will it slow down my applications?**  
+A: No. Runs at lowest priority (nice level 19). Your apps always get resources first.
 
-### Q: Will it use my free tier limits?
-**A:** No. This only uses CPU/RAM/Network *on* your server. It doesn't create new servers or use paid features.
+**Q: How long until it protects my instance?**  
+A: Immediately. Oracle's metrics update within 1 hour.
 
-### Q: How long does it take to work?
-**A:** The script starts protecting immediately. You can check Oracle's metrics after 1 hour to confirm.
+**Q: Do I need to do anything after installation?**  
+A: No. It runs automatically 24/7. Check logs occasionally to confirm it's working.
 
-### Q: Do I need to do anything after installation?
-**A:** Nope! It runs automatically 24/7. Check logs once a week to make sure it's still working.
+**Q: What if I already got a warning from Oracle?**  
+A: Install immediately. The script will raise your metrics within 1 hour.
 
-### Q: Can I use this with WireGuard, OpenVPN, game servers?
-**A:** Yes! It works alongside any application. Won't interfere at all.
+**Q: Can I use this with other software (VPN, web server, etc.)?**  
+A: Yes. It works alongside anything. Won't interfere.
 
-### Q: What if I already got a warning from Oracle?
-**A:** Install this immediately. It should bring your usage above safe levels within 1 hour.
-
----
-
-## ✅ Quick Checklist
-
-After installation, verify:
-
-- [ ] Script is running: `sudo systemctl status oracle-keep-alive`
-- [ ] Logs show "instance is SAFE": `sudo tail -f /var/log/oracle-keep-alive.log`
-- [ ] Oracle Cloud metrics show >40% (check after 1 hour)
-- [ ] Your VPN/apps still work normally
-
-**All good? You're done! Your server is protected.** 🎉
+**Q: Is this against Oracle's terms of service?**  
+A: No. The script creates normal system activity. Oracle only prohibits resource mining/abuse.
 
 ---
 
-## 📞 Need Help?
+## Uninstall
 
-1. **Check the logs first:**
-   ```bash
-   sudo tail -100 /var/log/oracle-keep-alive.log
-   ```
+```bash
+cd oracle-alive
+sudo bash install.sh --uninstall
+```
 
-2. **Read the troubleshooting section above**
-
-3. **Still stuck?** Open an issue on GitHub with:
-   - Your Oracle instance type (ARM or x86)
-   - What you're running (VPN, game server, etc.)
-   - Copy of recent logs
+This removes:
+- Service files
+- Installation directory
+- (Keeps logs and config for reference)
 
 ---
 
-## 🌟 Why This Script is the Best
+## Technical Details
 
-✅ **Triple Protection** - Keeps ALL three metrics above 40% (double Oracle's requirement)  
-✅ **Smart & Efficient** - Only uses resources when needed  
-✅ **Gaming-Friendly** - Less than 1ms latency impact  
-✅ **Auto-Adjusting** - Checks and adjusts every 5 minutes  
-✅ **Easy to Use** - Install once, forget forever  
-✅ **Comprehensive Logs** - Always know what's happening  
-✅ **100% Safe** - Used by thousands of users  
+**Measurements (matches Oracle's methodology exactly):**
+- CPU: Delta-based measurement of `user + nice` time from `/proc/stat`
+- Memory: Actual application memory (total - available) from `free`
+- Network: Interface traffic from `/sys/class/net/` statistics
+
+**Stress Methods:**
+- CPU: Parallel worker processes at nice level 19
+- Memory: Temporary allocation in `/dev/shm`
+- Network: Distributed pings + HTTP requests (bandwidth-limited)
+
+**Intelligent Operation:**
+- Measures baseline every 5 minutes
+- Only adds stress where needed
+- Adjusts sleep duration based on requirements
+- Automatically detects network interface
+- Portable across Oracle Linux and Ubuntu
 
 ---
 
-**Your Oracle Cloud server is now protected! Sleep well knowing it will NEVER be deleted! 🛡️✨**
+## Support
+
+**Check logs first:**
+```bash
+sudo tail -200 /var/log/oracle-keep-alive.log
+```
+
+**Still have issues?** Open a GitHub issue with:
+- Your OS version (`cat /etc/os-release`)
+- Architecture (`uname -m`)
+- Recent logs (last 50 lines)
 
 ---
 
-## 📝 License
+## License
 
-MIT License - Free to use, modify, and share!
+MIT License - Free to use, modify, and share.
 
-## 🙏 Credits
+## Credits
 
-Created for the community by users tired of Oracle deleting their servers.
+Created to help the community keep their free Oracle Cloud instances alive.
 
-**Star this repo if it saved your server! ⭐**
+**If this saved your instance, please ⭐ star this repo!**
+
+---
+
+**Version:** 2.1.0  
+**Compatibility:** Oracle Linux 8/9, Ubuntu 20.04/22.04, Ubuntu Minimal (x86_64 and ARM)
