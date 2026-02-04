@@ -1,21 +1,23 @@
 #!/bin/bash
 #
-# Oracle Cloud Keep-Alive Script v2.1 (Intelligent Multi-Metric Edition)
+# Oracle Cloud Keep-Alive Script v2.2 (Parallel Stress Edition)
 # Prevents free tier ARM instances from being reclaimed due to inactivity
 #
-# NEW in v2.1:
-# - Real-time monitoring of CPU, Memory, and Network utilization
-# - Intelligent calculation of additional stress needed
-# - Dynamic adjustment to reach 40% (double minimum) on ALL three metrics
-# - Baseline detection to understand current system load
-# - Smart stress only adds what's needed to reach targets
+# NEW in v2.2:
+# - PARALLEL execution: CPU, memory, network run simultaneously
+# - CPU: 64s stress at 50-68% (USER+NICE only, matches Oracle)
+# - Memory: 90s hold (application memory only, matches Oracle)
+# - Network: 90s continuous traffic (sustained bandwidth, matches Oracle)
+# - Total cycle: 96s with high duty cycles (67-94%)
+# - Optimized to match Oracle's 60s periodic sampling methodology
+# - Recalibration every 12 cycles (~20 minutes)
 #
-# Version: 2.1.0
+# Version: 2.2.0
 #
 
 set -euo pipefail
 
-VERSION="2.1.0"
+VERSION="2.2.0"
 
 # ============================================================================
 # TARGET CONFIGURATION
@@ -31,6 +33,47 @@ TARGET_NETWORK_PERCENT="${TARGET_NETWORK_PERCENT:-40}"
 # Example: If target is 40%, margin of 5 means we aim for 45%
 SAFETY_MARGIN="${SAFETY_MARGIN:-5}"
 
+# CPU Stress Cycle Configuration (New Strategy)
+# Fixed stress/sleep pattern with periodic recalibration
+# 
+# OPTIMIZED PARALLEL STRATEGY:
+# ============================
+# All three metrics (CPU, Memory, Network) run IN PARALLEL for maximum efficiency
+# and to match Oracle's monitoring methodology.
+#
+# Cycle Structure (96 seconds total):
+#   t=0s:   START - CPU stress begins (64s duration)
+#           START - Memory allocated and held (90s duration)  
+#           START - Network continuous traffic (90s duration)
+#   t=64s:  CPU stress ends (sleep 0s)
+#           Memory continues holding (26s remaining)
+#           Network continues traffic (26s remaining)
+#   t=90s:  Memory released
+#           Network stopped
+#   t=90s:  Cleanup and prep for next cycle (6s)
+#   t=96s:  Next cycle begins
+#
+# Oracle Monitoring Alignment:
+# ============================
+# CPU:     Samples user+nice time only (we stress user-space = matches)
+#          64s active / 96s cycle = 67% duty × 68% intensity = 45% avg ✓
+#
+# Memory:  Samples application memory (total - available, excludes buffers)
+#          90s allocated / 96s cycle = 94% duty × 45% target = 42% avg ✓
+#
+# Network: Samples total interface traffic (all applications)
+#          90s traffic / 96s cycle = 94% duty × bandwidth = sustained ✓
+#
+CPU_STRESS_PERCENT="${CPU_STRESS_PERCENT:-50}"      # Initial stress intensity (will auto-adjust to ~68%)
+CPU_STRESS_DURATION="${CPU_STRESS_DURATION:-64}"    # Stress phase duration (seconds)
+CPU_SLEEP_DURATION="${CPU_SLEEP_DURATION:-0}"       # Sleep phase (0 = overlap with memory/network)
+CPU_RECALIBRATION_CYCLES="${CPU_RECALIBRATION_CYCLES:-12}"  # Recalibrate every N cycles
+CPU_STRESS_FLOOR="${CPU_STRESS_FLOOR:-40}"          # Minimum stress percentage (safety floor)
+
+# Memory/Network parallel stress duration
+# How long to hold memory and run network traffic (in parallel with CPU + additional time)
+MEMORY_NETWORK_DURATION="${MEMORY_NETWORK_DURATION:-90}"  # Hold for 90s out of 96s cycle
+
 # Monitoring interval - how often to check and adjust (seconds)
 MONITORING_INTERVAL="${MONITORING_INTERVAL:-300}"  # 5 minutes
 
@@ -39,23 +82,16 @@ MONITORING_INTERVAL="${MONITORING_INTERVAL:-300}"  # 5 minutes
 BASELINE_DURATION="${BASELINE_DURATION:-60}"
 
 # ============================================================================
-# DEFAULT CONFIGURATION
+# DEFAULT CONFIGURATION (LEGACY - kept for compatibility)
 # ============================================================================
-
-# Timing
-STRESS_DURATION="${STRESS_DURATION:-45}"
-MIN_SLEEP_DURATION="${MIN_SLEEP_DURATION:-60}"
-MAX_SLEEP_DURATION="${MAX_SLEEP_DURATION:-600}"
 
 # CPU
 STRESS_CPU="${STRESS_CPU:-1}"
 CPU_WORKERS="${CPU_WORKERS:-}"
-MAX_CPU_STRESS_PERCENT="${MAX_CPU_STRESS_PERCENT:-55}"
 
 # Memory
 STRESS_MEMORY="${STRESS_MEMORY:-1}"
 MEMORY_STRESS_MB="${MEMORY_STRESS_MB:-150}"
-MEMORY_HOLD_DURATION="${MEMORY_HOLD_DURATION:-10}"
 
 # Network
 STRESS_NETWORK="${STRESS_NETWORK:-1}"
@@ -89,6 +125,7 @@ IO_SCHEDULING_CLASS="${IO_SCHEDULING_CLASS:-idle}"
 CPU_COUNT=1
 TOTAL_MEMORY_MB=0
 CYCLE_COUNT=0
+CPU_CYCLE_COUNT=0  # Track CPU stress cycles for recalibration
 
 # Baseline metrics (what system normally uses without our stress)
 BASELINE_CPU=0
@@ -105,8 +142,8 @@ REQUIRED_CPU_STRESS=0
 REQUIRED_MEMORY_STRESS_MB=0
 REQUIRED_NETWORK_STRESS_KBS=0
 
-# Dynamic sleep duration
-CURRENT_SLEEP_DURATION=300
+# Dynamic CPU stress intensity (initialized from config, recalibrated periodically)
+CURRENT_CPU_STRESS_PERCENT="${CPU_STRESS_PERCENT}"
 
 # Network interface for monitoring
 PRIMARY_INTERFACE=""
@@ -115,6 +152,10 @@ PRIMARY_INTERFACE=""
 TOTAL_CPU_STRESS_TIME=0
 TOTAL_MEMORY_STRESS_TIME=0
 TOTAL_NETWORK_STRESS_TIME=0
+
+# Background stress process PIDs
+MEMORY_STRESS_PID=""
+NETWORK_STRESS_PID=""
 
 # ============================================================================
 # LOGGING FUNCTIONS
@@ -211,8 +252,24 @@ detect_system() {
 
 get_cpu_usage() {
     # Get USER CPU usage by measuring delta between two /proc/stat readings
+    # 
     # CRITICAL: Oracle only counts USER + NICE time, NOT system/kernel time
-    # This matches Oracle's monitoring methodology
+    # This matches Oracle's monitoring methodology EXACTLY
+    # 
+    # What we measure (matches Oracle):
+    #   ✓ user   - Normal user-space processes
+    #   ✓ nice   - Niced user-space processes
+    # 
+    # What we EXCLUDE (Oracle also excludes these):
+    #   ✗ system - Kernel/system time
+    #   ✗ irq    - Hardware interrupt time
+    #   ✗ softirq - Software interrupt time
+    #   ✗ steal  - Time stolen by hypervisor
+    #   ✗ iowait - Waiting for I/O
+    # 
+    # This ensures our measurements match what Oracle sees and uses
+    # for reclaim decisions. System processes DON'T count!
+    
     if [[ ! -f /proc/stat ]]; then
         echo "0"
         return
@@ -457,21 +514,12 @@ calculate_required_stress() {
     
     log_info "Calculating required additional stress..."
     
-    # CPU calculation
+    # CPU calculation (no longer used in v2.2 parallel - kept for baseline reference)
     if [[ $BASELINE_CPU -ge $target_cpu ]]; then
         REQUIRED_CPU_STRESS=0
         log_info "  • CPU: Already at ${BASELINE_CPU}% (target: ${target_cpu}%) - NO STRESS NEEDED ✓"
     else
         REQUIRED_CPU_STRESS=$((target_cpu - BASELINE_CPU))
-        
-        # Cap CPU stress at MAX_CPU_STRESS_PERCENT to prevent performance spikes
-        # If capped, we'll compensate by running more frequently (shorter sleep)
-        if [[ $REQUIRED_CPU_STRESS -gt $MAX_CPU_STRESS_PERCENT ]]; then
-            log_info "  • CPU: Need ${REQUIRED_CPU_STRESS}% but capping at ${MAX_CPU_STRESS_PERCENT}% to avoid spikes"
-            log_info "  •      Will compensate with MORE FREQUENT cycles (shorter sleep)"
-            REQUIRED_CPU_STRESS=$MAX_CPU_STRESS_PERCENT
-        fi
-        
         log_info "  • CPU: Adding ${REQUIRED_CPU_STRESS}% stress (baseline: ${BASELINE_CPU}%, target: ${target_cpu}%)"
     fi
     
@@ -507,74 +555,46 @@ calculate_required_stress() {
         REQUIRED_NETWORK_STRESS_KBS=$((target_network_kbs - BASELINE_NETWORK_KB))
         log_info "  • Network: Need additional ${REQUIRED_NETWORK_STRESS_KBS} KB/s (baseline: ${BASELINE_NETWORK_KB} KB/s, target: ${target_network_kbs} KB/s)"
     fi
-    
-    # Adjust sleep duration based on how much stress we need
-    calculate_sleep_duration
-}
-
-calculate_sleep_duration() {
-    # If we need a lot of stress, reduce sleep time
-    # If we need little stress, increase sleep time
-    
-    local stress_level=0
-    
-    # Calculate overall stress level (0-100)
-    if [[ $REQUIRED_CPU_STRESS -gt 0 ]] && [[ $TARGET_CPU_PERCENT -gt 0 ]]; then
-        stress_level=$((stress_level + (REQUIRED_CPU_STRESS * 100 / TARGET_CPU_PERCENT)))
-    fi
-    
-    if [[ $REQUIRED_MEMORY_STRESS_MB -gt 0 ]] && [[ $TOTAL_MEMORY_MB -gt 0 ]]; then
-        local mem_percent=$((REQUIRED_MEMORY_STRESS_MB * 100 / TOTAL_MEMORY_MB))
-        if [[ $TARGET_MEMORY_PERCENT -gt 0 ]]; then
-            stress_level=$((stress_level + (mem_percent * 100 / TARGET_MEMORY_PERCENT)))
-        fi
-    fi
-    
-    if [[ $REQUIRED_NETWORK_STRESS_KBS -gt 0 ]] && [[ $TARGET_NETWORK_PERCENT -gt 0 ]]; then
-        local net_percent=$((REQUIRED_NETWORK_STRESS_KBS * 100 / 12500))
-        stress_level=$((stress_level + (net_percent * 100 / TARGET_NETWORK_PERCENT)))
-    fi
-    
-    stress_level=$((stress_level / 3))  # Average of three metrics
-    
-    # Cap stress level at 100
-    if [[ $stress_level -gt 100 ]]; then
-        stress_level=100
-    fi
-    
-    # Inverse relationship: more stress needed = less sleep
-    # stress_level 0-100 maps to MAX_SLEEP_DURATION down to MIN_SLEEP_DURATION
-    local sleep_range=$((MAX_SLEEP_DURATION - MIN_SLEEP_DURATION))
-    CURRENT_SLEEP_DURATION=$((MAX_SLEEP_DURATION - (sleep_range * stress_level / 100)))
-    
-    # Ensure minimum sleep duration
-    if [[ $CURRENT_SLEEP_DURATION -lt $MIN_SLEEP_DURATION ]]; then
-        CURRENT_SLEEP_DURATION=$MIN_SLEEP_DURATION
-    fi
-    
-    log_info "Calculated stress level: ${stress_level}% → Sleep duration: ${CURRENT_SLEEP_DURATION}s"
 }
 
 # ============================================================================
 # INTELLIGENT STRESS FUNCTIONS
 # ============================================================================
 
-stress_cpu_intelligent() {
-    if [[ $REQUIRED_CPU_STRESS -le 0 ]]; then
-        log_debug "CPU stress not needed (baseline already sufficient)"
+stress_cpu_cycle() {
+    # New fixed-cycle CPU stress strategy
+    # Stress phase: CURRENT_CPU_STRESS_PERCENT% for CPU_STRESS_DURATION seconds
+    # Sleep phase: 0% for CPU_SLEEP_DURATION seconds
+    # Total cycle: CPU_STRESS_DURATION + CPU_SLEEP_DURATION seconds
+    
+    if [[ $STRESS_CPU -ne 1 ]]; then
+        log_debug "CPU stress disabled"
         return
     fi
     
-    log_info "CPU stress: Adding ${REQUIRED_CPU_STRESS}% for ${STRESS_DURATION}s"
+    # Increment cycle counter
+    CPU_CYCLE_COUNT=$((CPU_CYCLE_COUNT + 1))
+    
+    # Check if recalibration is needed (every 12 cycles)
+    if [[ $((CPU_CYCLE_COUNT % CPU_RECALIBRATION_CYCLES)) -eq 0 ]]; then
+        recalibrate_cpu_stress
+    fi
+    
+    local total_cycle_duration=$((CPU_STRESS_DURATION + CPU_SLEEP_DURATION))
+    local expected_avg=$((CURRENT_CPU_STRESS_PERCENT * CPU_STRESS_DURATION / total_cycle_duration))
+    
+    log_info "CPU Cycle #${CPU_CYCLE_COUNT}: ${CURRENT_CPU_STRESS_PERCENT}% for ${CPU_STRESS_DURATION}s, sleep ${CPU_SLEEP_DURATION}s (expect ${expected_avg}% avg)"
+    
+    # === STRESS PHASE ===
+    log_info "CPU stress phase: Running at ${CURRENT_CPU_STRESS_PERCENT}% for ${CPU_STRESS_DURATION}s"
     
     local start_time=$SECONDS
-    local end_time=$((SECONDS + STRESS_DURATION))
+    local end_time=$((SECONDS + CPU_STRESS_DURATION))
     local pids=()
     
-    # Calculate iterations before each microsleep
-    # Higher CPU stress = more iterations (more work, less sleep)
-    # Lower CPU stress = fewer iterations (less work, more sleep)
-    local iterations=$((REQUIRED_CPU_STRESS * 50))  # 0-5000 based on stress needed
+    # Calculate iterations to achieve target CPU percentage
+    # Higher percentage = more iterations (more work, less sleep)
+    local iterations=$((CURRENT_CPU_STRESS_PERCENT * 50))
     if [[ $iterations -lt 100 ]]; then
         iterations=100
     fi
@@ -591,8 +611,7 @@ stress_cpu_intelligent() {
                 for ((j = 0; j < iterations; j++)); do
                     : $((j * j * j % 7919))
                 done
-                # Minimal sleep to allow other processes - use integer sleep with /dev/null trick
-                # This is a no-op sleep that yields CPU briefly
+                # Brief yield to allow other processes
                 read -t 0.01 -N 0 2>/dev/null || true
             done
         ) &
@@ -605,21 +624,84 @@ stress_cpu_intelligent() {
     
     local elapsed=$((SECONDS - start_time))
     TOTAL_CPU_STRESS_TIME=$((TOTAL_CPU_STRESS_TIME + elapsed))
-    log_info "CPU stress completed (${elapsed}s)"
+    log_info "CPU stress phase completed (${elapsed}s)"
+    
+    # === SLEEP PHASE ===
+    log_info "CPU sleep phase: ${CPU_SLEEP_DURATION}s"
+    sleep "$CPU_SLEEP_DURATION"
 }
 
-stress_memory_intelligent() {
-    if [[ $REQUIRED_MEMORY_STRESS_MB -le 0 ]]; then
-        log_debug "Memory stress not needed (baseline already sufficient)"
+recalibrate_cpu_stress() {
+    # Scan actual system-wide CPU usage and recalculate target stress intensity
+    # Called every CPU_RECALIBRATION_CYCLES cycles (default: 12)
+    
+    log_info "=== CPU Recalibration (after ${CPU_RECALIBRATION_CYCLES} cycles) ==="
+    
+    # Measure current system-wide CPU usage
+    log_info "Scanning actual system CPU usage..."
+    local actual_cpu=$(get_cpu_usage_average 10)
+    
+    log_info "Current actual CPU usage: ${actual_cpu}%"
+    log_info "Target (with buffer): $((TARGET_CPU_PERCENT + SAFETY_MARGIN))%"
+    
+    # Calculate new stress intensity based on formula: target% + buffer%
+    local target_with_buffer=$((TARGET_CPU_PERCENT + SAFETY_MARGIN))
+    
+    # Calculate the required stress percentage to achieve target
+    # We need to account for the duty cycle: stress_duration / total_cycle_duration
+    local total_cycle_duration=$((CPU_STRESS_DURATION + CPU_SLEEP_DURATION))
+    local duty_cycle_percent=$((CPU_STRESS_DURATION * 100 / total_cycle_duration))
+    
+    # If actual < target, we need more stress
+    # stress_intensity = (target - baseline) * 100 / duty_cycle_percent
+    local baseline_cpu=$actual_cpu
+    
+    if [[ $baseline_cpu -ge $target_with_buffer ]]; then
+        # Already at or above target
+        CURRENT_CPU_STRESS_PERCENT=$CPU_STRESS_FLOOR
+        log_info "Already at target, setting stress to floor: ${CURRENT_CPU_STRESS_PERCENT}%"
+    else
+        # Calculate required stress intensity
+        local gap=$((target_with_buffer - baseline_cpu))
+        # Recalculate: what stress % during stress phase will give us the gap we need?
+        # gap = stress_intensity * duty_cycle_percent / 100
+        # stress_intensity = gap * 100 / duty_cycle_percent
+        CURRENT_CPU_STRESS_PERCENT=$((gap * 100 / duty_cycle_percent))
+        
+        log_info "Gap to target: ${gap}% (baseline: ${baseline_cpu}%, target: ${target_with_buffer}%)"
+        log_info "Duty cycle: ${duty_cycle_percent}% (${CPU_STRESS_DURATION}s/${total_cycle_duration}s)"
+        log_info "Calculated stress intensity: ${CURRENT_CPU_STRESS_PERCENT}%"
+    fi
+    
+    # Apply floor constraint
+    if [[ $CURRENT_CPU_STRESS_PERCENT -lt $CPU_STRESS_FLOOR ]]; then
+        log_info "Applying floor constraint: ${CURRENT_CPU_STRESS_PERCENT}% → ${CPU_STRESS_FLOOR}%"
+        CURRENT_CPU_STRESS_PERCENT=$CPU_STRESS_FLOOR
+    fi
+    
+    # Cap at 100%
+    if [[ $CURRENT_CPU_STRESS_PERCENT -gt 100 ]]; then
+        log_info "Capping at maximum: ${CURRENT_CPU_STRESS_PERCENT}% → 100%"
+        CURRENT_CPU_STRESS_PERCENT=100
+    fi
+    
+    log_info "New CPU stress intensity: ${CURRENT_CPU_STRESS_PERCENT}%"
+    log_info "=== Recalibration Complete ==="
+}
+
+stress_memory_parallel() {
+    # Parallel memory stress - allocates and holds for MEMORY_NETWORK_DURATION
+    # Runs in background, returns immediately
+    # Call cleanup_memory_stress() to stop and release
+    
+    if [[ $STRESS_MEMORY -ne 1 ]] || [[ $REQUIRED_MEMORY_STRESS_MB -le 0 ]]; then
+        log_debug "Memory stress not needed (disabled or baseline sufficient)"
         return
     fi
     
-    log_info "Memory stress: Allocating ${REQUIRED_MEMORY_STRESS_MB}MB for ${MEMORY_HOLD_DURATION}s"
+    log_info "Memory stress: Allocating ${REQUIRED_MEMORY_STRESS_MB}MB, holding for ${MEMORY_NETWORK_DURATION}s (parallel)"
     
-    local start_time=$SECONDS
-    local temp_file="/dev/shm/oracle-keep-alive-$$"
-    
-    # Safety check - get available memory (works on old and new free versions)
+    # Safety check - get available memory
     local free_memory_mb
     local col_count
     col_count=$(free -m 2>/dev/null | awk '/^Mem:/ {print NF}')
@@ -627,11 +709,9 @@ stress_memory_intelligent() {
     if [[ "$col_count" -ge 7 ]]; then
         free_memory_mb=$(free -m 2>/dev/null | awk '/^Mem:/ {print $7}')
     else
-        # Fallback: use free + buffers
         free_memory_mb=$(free -m 2>/dev/null | awk '/^Mem:/ {print $4 + $6}')
     fi
     
-    # Default if detection fails
     if [[ -z "$free_memory_mb" ]] || [[ "$free_memory_mb" -le 0 ]]; then
         free_memory_mb=100
     fi
@@ -643,83 +723,140 @@ stress_memory_intelligent() {
         memory_mb=$free_memory_mb
     fi
     
-    # Ensure we have at least some memory to allocate
     if [[ $memory_mb -le 0 ]]; then
         log_warn "No memory available for stress test"
         return
     fi
     
-    if dd if=/dev/urandom of="$temp_file" bs=1M count="$memory_mb" 2>/dev/null; then
-        cat "$temp_file" > /dev/null 2>&1 || true
-        sleep "$MEMORY_HOLD_DURATION"
+    # Allocate in background and hold
+    # Use consistent naming: PID stored, same PID used in cleanup
+    (
+        local start_time=$SECONDS
+        local temp_file="/dev/shm/oracle-keep-alive-mem-$$"
+        
+        if dd if=/dev/urandom of="$temp_file" bs=1M count="$memory_mb" 2>/dev/null; then
+            log_debug "Memory allocated: ${memory_mb}MB at $temp_file, holding for ${MEMORY_NETWORK_DURATION}s"
+            
+            # Hold memory by keeping it in cache
+            while [[ -f "$temp_file" ]] && [[ $((SECONDS - start_time)) -lt $MEMORY_NETWORK_DURATION ]]; do
+                cat "$temp_file" > /dev/null 2>&1 || true
+                sleep 5
+            done
+            
+            rm -f "$temp_file" 2>/dev/null || true
+            
+            local elapsed=$((SECONDS - start_time))
+            TOTAL_MEMORY_STRESS_TIME=$((TOTAL_MEMORY_STRESS_TIME + elapsed))
+            log_info "Memory stress completed (held for ${elapsed}s)"
+        else
+            log_error "Memory allocation failed"
+            rm -f "$temp_file" 2>/dev/null || true
+        fi
+    ) &
+    
+    # Store PID for cleanup
+    MEMORY_STRESS_PID=$!
+}
+
+cleanup_memory_stress() {
+    # Stop memory stress and release
+    if [[ -n "${MEMORY_STRESS_PID:-}" ]]; then
+        # Construct temp file name using the stored PID
+        local temp_file="/dev/shm/oracle-keep-alive-mem-${MEMORY_STRESS_PID}"
+        
+        # Remove temp file (signals subprocess to exit)
         rm -f "$temp_file" 2>/dev/null || true
         
-        local elapsed=$((SECONDS - start_time))
-        TOTAL_MEMORY_STRESS_TIME=$((TOTAL_MEMORY_STRESS_TIME + elapsed))
-        log_info "Memory stress completed (${elapsed}s)"
-    else
-        log_error "Memory stress failed"
-        rm -f "$temp_file" 2>/dev/null || true
+        # Kill the background process
+        kill -TERM "$MEMORY_STRESS_PID" 2>/dev/null || true
+        wait "$MEMORY_STRESS_PID" 2>/dev/null || true
+        
+        MEMORY_STRESS_PID=""
     fi
 }
 
-stress_network_intelligent() {
-    if [[ $REQUIRED_NETWORK_STRESS_KBS -le 0 ]]; then
-        log_debug "Network stress not needed (baseline already sufficient)"
+stress_network_parallel() {
+    # Parallel network stress - continuous traffic for MEMORY_NETWORK_DURATION
+    # Runs in background, returns immediately
+    # Call cleanup_network_stress() to stop
+    
+    if [[ $STRESS_NETWORK -ne 1 ]] || [[ $REQUIRED_NETWORK_STRESS_KBS -le 0 ]]; then
+        log_debug "Network stress not needed (disabled or baseline sufficient)"
         return
     fi
     
-    log_info "Network stress: Generating ${REQUIRED_NETWORK_STRESS_KBS} KB/s"
-    
-    local start_time=$SECONDS
-    local targets_array=($NETWORK_PING_TARGETS)
-    local http_targets_array=($NETWORK_HTTP_TARGETS)
-    
-    # 1. Distributed pings (parallel for efficiency)
-    # Note: ping -i < 0.2 requires root, and some systems don't support decimals
-    if [[ "$NETWORK_USE_DISTRIBUTED_TARGETS" == "1" ]] && command -v ping &> /dev/null; then
-        for target in "${targets_array[@]}"; do
-            (
-                renice -n "$PROCESS_NICE_LEVEL" $$ >/dev/null 2>&1 || true
-                # Use -i 1 for maximum compatibility (works on all systems)
-                # Running in parallel compensates for the slower interval
-                ping -c "$NETWORK_PINGS_PER_TARGET" -i 1 -W 2 "$target" > /dev/null 2>&1 || true
-            ) &
-        done
-        wait
+    # Cap at configured bandwidth limit
+    local target_kbs=$REQUIRED_NETWORK_STRESS_KBS
+    if [[ $target_kbs -gt $NETWORK_BANDWIDTH_LIMIT_KBS ]]; then
+        target_kbs=$NETWORK_BANDWIDTH_LIMIT_KBS
     fi
     
-    # 2. HTTP requests
-    if command -v curl &> /dev/null; then
-        for ((i=0; i<NETWORK_HTTP_REQUESTS; i++)); do
-            local target="${http_targets_array[$((i % ${#http_targets_array[@]}))]}"
-            (
-                renice -n "$PROCESS_NICE_LEVEL" $$ >/dev/null 2>&1 || true
-                curl -s -m "$NETWORK_HTTP_TIMEOUT" -o /dev/null "$target" 2>/dev/null || true
-            ) &
-            # Use integer sleep for compatibility
-            if [[ $((i % 5)) -eq 0 ]]; then
-                sleep 1
-            fi
-        done
-        wait
-    fi
+    log_info "Network stress: Continuous ${target_kbs} KB/s for ${MEMORY_NETWORK_DURATION}s (parallel)"
     
-    # 3. Bandwidth test - download enough data to generate required KB/s
-    if [[ "$NETWORK_ENABLE_DOWNLOAD_TEST" == "1" ]] && command -v curl &> /dev/null; then
-        # Download for 5 seconds at required rate
-        local bytes_to_download=$((REQUIRED_NETWORK_STRESS_KBS * 1024 * 5))
+    # Start continuous network traffic in background
+    (
+        local start_time=$SECONDS
+        local targets_array=($NETWORK_PING_TARGETS)
+        local http_targets_array=($NETWORK_HTTP_TARGETS)
         
-        (
-            renice -n "$PROCESS_NICE_LEVEL" $$ >/dev/null 2>&1 || true
-            curl -s -m 10 --limit-rate "${REQUIRED_NETWORK_STRESS_KBS}k" -r "0-${bytes_to_download}" -o /dev/null "$NETWORK_DOWNLOAD_TEST_URL" 2>/dev/null || true
-        ) &
-        wait
-    fi
+        renice -n "$PROCESS_NICE_LEVEL" $$ >/dev/null 2>&1 || true
+        
+        # Continuous loop until duration expires
+        while [[ $((SECONDS - start_time)) -lt $MEMORY_NETWORK_DURATION ]]; do
+            
+            # 1. Quick pings to multiple targets (parallel, fast)
+            if [[ "$NETWORK_USE_DISTRIBUTED_TARGETS" == "1" ]] && command -v ping &> /dev/null; then
+                for target in "${targets_array[@]}"; do
+                    ping -c 2 -i 1 -W 1 "$target" > /dev/null 2>&1 &
+                done
+            fi
+            
+            # 2. HTTP requests (lightweight, distributed)
+            if command -v curl &> /dev/null; then
+                for target in "${http_targets_array[@]}"; do
+                    curl -s -m 2 -o /dev/null "$target" 2>/dev/null &
+                done
+            fi
+            
+            # 3. Continuous download with rate limiting (main bandwidth generator)
+            if [[ "$NETWORK_ENABLE_DOWNLOAD_TEST" == "1" ]] && command -v curl &> /dev/null; then
+                # Download for 8 seconds at target rate, then loop
+                curl -s -m 10 --limit-rate "${target_kbs}k" -o /dev/null "$NETWORK_DOWNLOAD_TEST_URL" 2>/dev/null &
+            fi
+            
+            # Wait a bit before next iteration (8s download + 2s gap = ~10s per loop)
+            sleep 8
+            
+            # Cleanup background jobs to avoid accumulation (portable way)
+            # Kill all background jobs in this subshell
+            for pid in $(jobs -p 2>/dev/null); do
+                kill "$pid" 2>/dev/null || true
+            done
+        done
+        
+        # Final cleanup - kill all remaining background jobs
+        for pid in $(jobs -p 2>/dev/null); do
+            kill "$pid" 2>/dev/null || true
+        done
+        
+        local elapsed=$((SECONDS - start_time))
+        TOTAL_NETWORK_STRESS_TIME=$((TOTAL_NETWORK_STRESS_TIME + elapsed))
+        log_info "Network stress completed (ran for ${elapsed}s)"
+    ) &
     
-    local elapsed=$((SECONDS - start_time))
-    TOTAL_NETWORK_STRESS_TIME=$((TOTAL_NETWORK_STRESS_TIME + elapsed))
-    log_info "Network stress completed (${elapsed}s)"
+    # Store PID for cleanup
+    NETWORK_STRESS_PID=$!
+}
+
+cleanup_network_stress() {
+    # Stop network stress
+    if [[ -n "${NETWORK_STRESS_PID:-}" ]]; then
+        # Kill the main process and all its children
+        pkill -P "$NETWORK_STRESS_PID" 2>/dev/null || true
+        kill -TERM "$NETWORK_STRESS_PID" 2>/dev/null || true
+        wait "$NETWORK_STRESS_PID" 2>/dev/null || true
+        NETWORK_STRESS_PID=""
+    fi
 }
 
 # ============================================================================
@@ -819,7 +956,7 @@ show_comprehensive_stats() {
     local uptime_str
     uptime_str=$(uptime -p 2>/dev/null) || uptime_str=$(uptime | sed 's/.*up /up /' | cut -d',' -f1-2)
     log_info "System uptime: $uptime_str"
-    log_info "Current sleep duration: ${CURRENT_SLEEP_DURATION}s"
+    log_info "Total cycle duration: ~$((MEMORY_NETWORK_DURATION + 6))s (${MEMORY_NETWORK_DURATION}s stress + 6s cleanup)"
     log_info "================================================"
 }
 
@@ -829,8 +966,17 @@ show_comprehensive_stats() {
 
 cleanup() {
     log_info "Received shutdown signal, cleaning up..."
+    
+    # Stop background memory and network stress
+    cleanup_memory_stress
+    cleanup_network_stress
+    
+    # Kill any remaining child processes
     pkill -P $$ 2>/dev/null || true
+    
+    # Remove temp files
     rm -f /dev/shm/oracle-keep-alive-* 2>/dev/null || true
+    
     log_info "Cleanup complete, exiting"
     exit 0
 }
@@ -840,7 +986,7 @@ main() {
     
     log_info "================================================"
     log_info "Oracle Cloud Keep-Alive v${VERSION} Started"
-    log_info "INTELLIGENT MULTI-METRIC EDITION"
+    log_info "PARALLEL STRESS EDITION"
     log_info "================================================"
     
     detect_system
@@ -849,40 +995,60 @@ main() {
     measure_baseline
     
     log_info ""
-    log_info "Starting intelligent stress cycles..."
-    log_info "Will monitor and adjust every ${MONITORING_INTERVAL}s"
+    log_info "Starting parallel stress cycles..."
+    log_info "CPU: ${CPU_STRESS_PERCENT}% for ${CPU_STRESS_DURATION}s"
+    log_info "Memory/Network: Hold for ${MEMORY_NETWORK_DURATION}s (parallel with CPU)"
+    log_info "Total cycle: ~$((MEMORY_NETWORK_DURATION + 6))s (90s stress + 6s cleanup)"
+    log_info "CPU recalibration: Every ${CPU_RECALIBRATION_CYCLES} cycles"
     log_info ""
     
     while true; do
         CYCLE_COUNT=$((CYCLE_COUNT + 1))
-        log_info "--- Cycle #${CYCLE_COUNT} ---"
+        log_info "=== Cycle #${CYCLE_COUNT} ==="
         
-        # Apply intelligent stress based on calculated requirements
-        stress_cpu_intelligent
-        stress_memory_intelligent
-        stress_network_intelligent
+        local cycle_start=$SECONDS
+        
+        # START ALL THREE STRESSES IN PARALLEL
+        # Memory and network start immediately and run in background
+        stress_memory_parallel
+        stress_network_parallel
+        
+        # CPU stress runs in foreground (blocks for CPU_STRESS_DURATION)
+        stress_cpu_cycle
+        
+        # CPU is done at t=64s, but memory/network continue until t=90s
+        local cpu_done=$((SECONDS - cycle_start))
+        local remaining=$((MEMORY_NETWORK_DURATION - cpu_done))
+        
+        if [[ $remaining -gt 0 ]]; then
+            log_info "CPU done (${cpu_done}s), waiting ${remaining}s for memory/network to complete..."
+            sleep "$remaining"
+        fi
+        
+        # Stop memory and network stress
+        cleanup_memory_stress
+        cleanup_network_stress
         
         # Show comprehensive stats periodically
         if [[ $LOG_STATS_EVERY_N_CYCLES -gt 0 ]] && [[ $((CYCLE_COUNT % LOG_STATS_EVERY_N_CYCLES)) -eq 0 ]]; then
             show_comprehensive_stats
         fi
         
-        # Sleep (ensure minimum of 60 seconds)
-        if [[ $CURRENT_SLEEP_DURATION -lt 60 ]]; then
-            CURRENT_SLEEP_DURATION=60
+        # Short cleanup/prep time before next cycle
+        log_info "Cleanup and prep (6s)..."
+        sleep 6
+        
+        local cycle_total=$((SECONDS - cycle_start))
+        log_info "Cycle completed in ${cycle_total}s"
+        
+        # Monitor and adjust memory/network requirements periodically
+        # CPU self-calibrates every 12 cycles
+        local cycles_per_monitor=$((MONITORING_INTERVAL / (MEMORY_NETWORK_DURATION + 6)))
+        if [[ $cycles_per_monitor -lt 1 ]]; then
+            cycles_per_monitor=1
         fi
         
-        local sleep_minutes=$((CURRENT_SLEEP_DURATION / 60))
-        log_info "Sleeping for ${CURRENT_SLEEP_DURATION}s... (next cycle in ${sleep_minutes}m)"
-        sleep "$CURRENT_SLEEP_DURATION"
-        
-        # Monitor and adjust if needed (avoid division by zero)
-        local monitor_interval=$((MONITORING_INTERVAL / CURRENT_SLEEP_DURATION))
-        if [[ $monitor_interval -lt 1 ]]; then
-            monitor_interval=1
-        fi
-        
-        if [[ $((CYCLE_COUNT % monitor_interval)) -eq 0 ]]; then
+        if [[ $((CYCLE_COUNT % cycles_per_monitor)) -eq 0 ]]; then
             monitor_and_adjust
         fi
     done
