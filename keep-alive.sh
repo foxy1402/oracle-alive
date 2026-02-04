@@ -221,7 +221,8 @@ get_cpu_usage() {
     local cpu_line1
     cpu_line1=$(head -1 /proc/stat)
     local user1 nice1 system1 idle1 iowait1 irq1 softirq1
-    read -r _ user1 nice1 system1 idle1 iowait1 irq1 softirq1 _ <<< "$cpu_line1"
+    set -- $cpu_line1
+    user1=$2 nice1=$3 system1=$4 idle1=$5 iowait1=$6 irq1=$7 softirq1=$8
     
     # Wait 1 second
     sleep 1
@@ -230,7 +231,8 @@ get_cpu_usage() {
     local cpu_line2
     cpu_line2=$(head -1 /proc/stat)
     local user2 nice2 system2 idle2 iowait2 irq2 softirq2
-    read -r _ user2 nice2 system2 idle2 iowait2 irq2 softirq2 _ <<< "$cpu_line2"
+    set -- $cpu_line2
+    user2=$2 nice2=$3 system2=$4 idle2=$5 iowait2=$6 irq2=$7 softirq2=$8
     
     # Calculate deltas
     local user_delta=$((user2 - user1))
