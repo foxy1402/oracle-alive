@@ -121,26 +121,300 @@ sudo bash install.sh --uninstall
 
 ---
 
-## Configuration (Optional)
+## Configuration Guide
 
-Default settings work for 99% of users. To customize:
+### Quick Start (Default Settings)
+
+**Default settings work for 99% of users** - targets 40% on all metrics (double Oracle's 20% minimum).
+
+No configuration needed - just install and forget!
+
+---
+
+### How to Modify Configuration
+
+If you need to customize settings (lower targets, adjust timing, disable metrics):
+
+#### Step 1: Edit the configuration file
 
 ```bash
 sudo nano /etc/default/oracle-keep-alive
 ```
 
-**Key settings:**
-- `TARGET_CPU_PERCENT=40` - Target CPU usage (default: 40%, double Oracle's minimum)
-- `TARGET_MEMORY_PERCENT=40` - Target memory usage (default: 40%)
-- `TARGET_NETWORK_PERCENT=40` - Target network usage (default: 40%)
-- `CPU_STRESS_DURATION=64` - CPU stress duration in seconds (default: 64s)
-- `MEMORY_NETWORK_DURATION=90` - Memory/network hold duration (default: 90s)
-- `CPU_RECALIBRATION_CYCLES=12` - Recalibrate every N cycles (default: 12 = ~20min)
+#### Step 2: Make your changes
 
-After changing settings:
+See [Common Configuration Scenarios](#common-configuration-scenarios) below for examples.
+
+#### Step 3: Apply changes
+
+**IMPORTANT:** After editing, you MUST reload systemd and restart the service:
+
 ```bash
+# Reload systemd daemon (required to load new environment variables)
+sudo systemctl daemon-reload
+
+# Restart the service
 sudo systemctl restart oracle-keep-alive
 ```
+
+**Why daemon-reload is required:** The service uses `EnvironmentFile` to load your config. Without `daemon-reload`, systemd won't pick up the changes.
+
+#### Step 4: Verify changes took effect
+
+```bash
+# Check that environment variables loaded (should show your values)
+sudo systemctl show oracle-keep-alive | grep TARGET_
+
+# Check logs to confirm new targets
+sudo tail -50 /var/log/oracle-keep-alive.log | grep "target"
+```
+
+You should see output like:
+```
+TARGET_CPU_PERCENT=35         # Your custom value
+[INFO]   • CPU: 35% + 5% = 40%
+```
+
+---
+
+### Common Configuration Scenarios
+
+#### Scenario 1: Lower CPU Target (e.g., for gaming VPN)
+
+**Goal:** Reduce CPU usage to 30% to minimize interference with gaming.
+
+Edit `/etc/default/oracle-keep-alive`:
+```bash
+TARGET_CPU_PERCENT=30          # Changed from 40
+TARGET_MEMORY_PERCENT=40       # Keep default
+TARGET_NETWORK_PERCENT=40      # Keep default
+SAFETY_MARGIN=5                # Keep default
+
+# Optional: Further reduce CPU intensity
+CPU_STRESS_PERCENT=40          # Changed from 50
+```
+
+Apply changes:
+```bash
+sudo systemctl daemon-reload
+sudo systemctl restart oracle-keep-alive
+```
+
+**Result:** CPU target becomes 30% + 5% = **35% total**
+
+---
+
+#### Scenario 2: Lower ALL targets (minimal Oracle protection)
+
+**Goal:** Use absolute minimum to stay above Oracle's 20% threshold.
+
+Edit `/etc/default/oracle-keep-alive`:
+```bash
+TARGET_CPU_PERCENT=25          # Just above Oracle minimum
+TARGET_MEMORY_PERCENT=25       # Just above Oracle minimum  
+TARGET_NETWORK_PERCENT=25      # Just above Oracle minimum
+SAFETY_MARGIN=5                # Keep 5% buffer
+
+# Reduce stress intensity
+CPU_STRESS_PERCENT=40
+NETWORK_BANDWIDTH_LIMIT_KBS=200
+```
+
+Apply changes:
+```bash
+sudo systemctl daemon-reload
+sudo systemctl restart oracle-keep-alive
+```
+
+**Result:** All metrics target 30% (25% + 5%)
+
+---
+
+#### Scenario 3: Disable Memory Stress (x86 instances only)
+
+**Goal:** Oracle doesn't monitor memory on x86 instances, so save resources.
+
+Edit `/etc/default/oracle-keep-alive`:
+```bash
+STRESS_MEMORY=0                # Disable memory stress
+TARGET_CPU_PERCENT=40          # Keep defaults
+TARGET_NETWORK_PERCENT=40
+```
+
+Apply changes:
+```bash
+sudo systemctl daemon-reload
+sudo systemctl restart oracle-keep-alive
+```
+
+**Note:** Only do this on **x86** instances. ARM instances MUST keep memory enabled!
+
+---
+
+#### Scenario 4: Increase Network Bandwidth
+
+**Goal:** Ensure network reaches target with higher traffic.
+
+Edit `/etc/default/oracle-keep-alive`:
+```bash
+NETWORK_BANDWIDTH_LIMIT_KBS=1000   # Increased from 500
+NETWORK_STRESS_MODE="smart"        # Keep smart mode
+```
+
+Apply changes:
+```bash
+sudo systemctl daemon-reload
+sudo systemctl restart oracle-keep-alive
+```
+
+---
+
+#### Scenario 5: Adjust Recalibration Frequency
+
+**Goal:** Recalibrate more often to adapt to changing workloads.
+
+Edit `/etc/default/oracle-keep-alive`:
+```bash
+CPU_RECALIBRATION_CYCLES=6     # Every 6 cycles (~10 min) instead of 12 (~20 min)
+MONITORING_INTERVAL=180        # Memory/network check every 3 min instead of 5 min
+```
+
+Apply changes:
+```bash
+sudo systemctl daemon-reload
+sudo systemctl restart oracle-keep-alive
+```
+
+---
+
+### Key Configuration Options
+
+#### Target Metrics
+```bash
+TARGET_CPU_PERCENT=40          # CPU target (default: 40%)
+TARGET_MEMORY_PERCENT=40       # Memory target (default: 40%)
+TARGET_NETWORK_PERCENT=40      # Network target (default: 40%)
+SAFETY_MARGIN=5                # Added to each target (default: 5%)
+```
+**Actual target = TARGET + SAFETY_MARGIN** (e.g., 40% + 5% = 45%)
+
+#### CPU Stress Timing (Parallel v2.2)
+```bash
+CPU_STRESS_PERCENT=50          # Initial CPU intensity (auto-adjusts to ~68%)
+CPU_STRESS_DURATION=64         # Stress phase duration (seconds)
+CPU_SLEEP_DURATION=0           # Sleep after CPU (0 = overlap with mem/net)
+CPU_RECALIBRATION_CYCLES=12    # Recalibrate every N cycles (~20 min)
+CPU_STRESS_FLOOR=40            # Minimum intensity (prevents drift)
+```
+
+#### Memory/Network Parallel Duration
+```bash
+MEMORY_NETWORK_DURATION=90     # How long to hold memory and run network (seconds)
+MEMORY_STRESS_MB=500           # Maximum memory to allocate (MB)
+```
+
+#### Network Settings
+```bash
+STRESS_NETWORK=1               # Enable/disable (1=on, 0=off)
+NETWORK_BANDWIDTH_LIMIT_KBS=500    # Max bandwidth (KB/s)
+NETWORK_STRESS_MODE="smart"    # Mode: "smart" or "aggressive"
+NETWORK_USE_TRAFFIC_SHAPING=1  # Prioritize gaming traffic (requires iproute2)
+```
+
+#### Enable/Disable Metrics
+```bash
+STRESS_CPU=1                   # Enable CPU stress (1=on, 0=off)
+STRESS_MEMORY=1                # Enable memory stress (1=on, 0=off)
+STRESS_NETWORK=1               # Enable network stress (1=on, 0=off)
+```
+
+#### Logging
+```bash
+LOG_LEVEL=INFO                 # DEBUG, INFO, WARN, ERROR
+LOG_FILE=/var/log/oracle-keep-alive.log
+```
+
+---
+
+### Important Notes
+
+1. **Always run `daemon-reload` after config changes**
+   ```bash
+   sudo systemctl daemon-reload
+   sudo systemctl restart oracle-keep-alive
+   ```
+
+2. **Verify changes took effect** - Check logs for new targets:
+   ```bash
+   sudo tail -50 /var/log/oracle-keep-alive.log | grep "CPU:"
+   ```
+
+3. **Don't set targets below 20%** - Oracle will delete your instance!
+
+4. **ARM instances need memory stress** - Don't disable `STRESS_MEMORY` on ARM
+
+5. **Wait 1 hour** - Oracle Cloud Console metrics update with a delay
+
+---
+
+### Troubleshooting Configuration
+
+#### Problem: Changes not taking effect
+
+**Symptom:** You changed `TARGET_CPU_PERCENT=35` but logs still show `target: 40%`
+
+**Solution:**
+```bash
+# Did you run daemon-reload? This is required!
+sudo systemctl daemon-reload
+sudo systemctl restart oracle-keep-alive
+
+# Verify environment loaded
+sudo systemctl show oracle-keep-alive | grep TARGET_CPU
+# Should show: TARGET_CPU_PERCENT=35
+
+# Check logs
+sudo tail -20 /var/log/oracle-keep-alive.log | grep "CPU:"
+# Should show: [INFO]   • CPU: 35% + 5% = 40%
+```
+
+If environment is empty, the service file may have a bug. Update to latest version:
+```bash
+cd oracle-alive
+git pull
+sudo bash install.sh
+```
+
+#### Problem: Service won't start after config change
+
+**Symptom:** `sudo systemctl status oracle-keep-alive` shows failed
+
+**Solution:**
+```bash
+# Check for syntax errors in config
+sudo nano /etc/default/oracle-keep-alive
+
+# Ensure no syntax errors:
+# - No spaces around = (use KEY=VALUE, not KEY = VALUE)
+# - No quotes unless needed (use 40, not "40" for numbers)
+# - No export prefix (use KEY=VALUE, not export KEY=VALUE)
+
+# Check logs for errors
+sudo journalctl -u oracle-keep-alive -n 50
+
+# Restore defaults if needed
+sudo cp /opt/oracle-keep-alive/../config.env /etc/default/oracle-keep-alive
+sudo systemctl restart oracle-keep-alive
+```
+
+---
+
+### Default Configuration File Location
+
+- **Config:** `/etc/default/oracle-keep-alive`
+- **Script:** `/opt/oracle-keep-alive/keep-alive.sh`
+- **Service:** `/etc/systemd/system/oracle-keep-alive.service`
+- **Logs:** `/var/log/oracle-keep-alive.log`
 
 ---
 

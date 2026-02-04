@@ -51,7 +51,9 @@ NoNewPrivileges=true
 ProtectHome=true
 
 # Make various system directories read-only
-ProtectSystem=strict
+# Note: Using 'full' instead of 'strict' to allow reading /etc/default/oracle-keep-alive
+# 'full' protects /usr and /boot (read-only) but allows reading /etc
+ProtectSystem=full
 
 # Allow writing to /var/log for log files
 ReadWritePaths=/var/log

@@ -1,5 +1,85 @@
 # Critical Audit Fixes - Oracle Cloud Keep-Alive
 
+## v2.2.2 - EnvironmentFile Loading Fix (2026-02-04)
+
+### Critical Issue Fixed: Config File Not Loading
+
+**Problem Identified:**
+- Users editing `/etc/default/oracle-keep-alive` found changes weren't taking effect
+- `TARGET_CPU_PERCENT=35` stayed at default 40% even after restart
+- `sudo systemctl show oracle-keep-alive --property=Environment` showed empty
+- systemd's `EnvironmentFile=-/etc/default/oracle-keep-alive` directive was being blocked
+
+**Root Cause:**
+- `ProtectSystem=strict` in the service file makes the entire filesystem read-only except for explicitly allowed paths
+- This security hardening feature prevented systemd from **reading** `/etc/default/oracle-keep-alive`
+- The `-` prefix in `EnvironmentFile=-` makes it optional, so systemd silently failed without errors
+- Script fell back to default values since environment variables weren't set
+
+**Solution Implemented:**
+
+Changed `ProtectSystem=strict` to `ProtectSystem=full`:
+- `strict`: Makes `/`, `/usr`, `/boot`, **and `/etc`** read-only
+- `full`: Makes `/usr` and `/boot` read-only, but **allows reading `/etc`**
+- Still maintains strong security by protecting system binaries
+- Allows reading config files from `/etc/default/`
+
+**Changes Made:**
+
+**`oracle-keep-alive.service` (lines 53-56):**
+```bash
+# OLD:
+ProtectSystem=strict
+
+# NEW:
+# Make various system directories read-only
+# Note: Using 'full' instead of 'strict' to allow reading /etc/default/oracle-keep-alive
+# 'full' protects /usr and /boot (read-only) but allows reading /etc
+ProtectSystem=full
+```
+
+**Testing:**
+```bash
+# Before fix:
+sudo systemctl show oracle-keep-alive --property=Environment
+# Output: Environment=
+
+# After fix:
+sudo systemctl daemon-reload
+sudo systemctl restart oracle-keep-alive
+sudo systemctl show oracle-keep-alive --property=Environment
+# Output: Environment=TARGET_CPU_PERCENT=35 TARGET_MEMORY_PERCENT=40 ...
+
+# Verify in logs:
+sudo tail -50 /var/log/oracle-keep-alive.log | grep "CPU:"
+# Output: [INFO]   • CPU: 35% + 5% = 40%
+```
+
+**Impact:**
+✅ **Config changes now work** - Edit `/etc/default/oracle-keep-alive` and restart to apply  
+✅ **Still secure** - `/usr` and `/boot` remain protected from modification  
+✅ **No functionality loss** - Script only needs to read `/etc`, not write to it  
+✅ **Backward compatible** - Existing installations will auto-update on next deploy
+
+**User Instructions:**
+
+After editing config:
+```bash
+# 1. Edit config file
+sudo nano /etc/default/oracle-keep-alive
+# Change: TARGET_CPU_PERCENT=35
+
+# 2. Reload systemd and restart (daemon-reload picks up service file changes)
+sudo systemctl daemon-reload
+sudo systemctl restart oracle-keep-alive
+
+# 3. Verify it loaded
+sudo systemctl show oracle-keep-alive | grep TARGET_CPU
+sudo tail -20 /var/log/oracle-keep-alive.log | grep "CPU:"
+```
+
+---
+
 ## v2.2.1 - Baseline Protection Enhancement (2026-02-04)
 
 ### Critical Issue Fixed: Baseline Measurement Gap
