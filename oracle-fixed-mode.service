@@ -1,0 +1,39 @@
+[Unit]
+Description=Oracle Cloud Fixed-Mode Keep-Alive Service
+Documentation=https://github.com/foxy1402/oracle-alive
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/opt/oracle-keep-alive/fixedmode.sh
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+# Run as root (required for memory and network stress)
+User=root
+
+# Process priority (lowest)
+Nice=19
+IOSchedulingClass=idle
+
+# Resource limits (safety guards)
+# Limit memory to 95% of system RAM to prevent OOM
+MemoryMax=95%
+# Allow high CPU usage (we want to use it)
+CPUQuota=100%
+
+# Security hardening
+PrivateTmp=true
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/log /dev/shm
+
+# Environment
+EnvironmentFile=-/etc/default/oracle-fixed-mode
+
+[Install]
+WantedBy=multi-user.target

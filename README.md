@@ -6,6 +6,26 @@ Works on Oracle Linux and Ubuntu (both x86_64 and ARM instances).
 
 ---
 
+## 🎛️ Two Modes Available
+
+### 🤖 **Intelligent Mode** (Recommended - This README)
+- **Auto-adjusts** based on system activity
+- **Parallel stress** - all metrics run simultaneously
+- **Best for:** Multi-core instances, set-and-forget operation
+- **Install:** `sudo bash install.sh`
+
+### 🎯 **Fixed-Mode** ([See README-FIXED.md](README-FIXED.md))
+- **Manual targets** - you set exact percentages (e.g., CPU 25%, RAM 30%)
+- **No overshoot** - perfect for single-CPU instances
+- **Stable dashboard lines** - continuous monitoring, no sleep cycles
+- **Best for:** Single-CPU instances, precise control needed
+- **Install:** `sudo bash install-fixed.sh`
+
+> **Single-CPU users:** Use Fixed-Mode to prevent CPU hitting 100%. [Quick Start →](README-FIXED.md#-quick-start)  
+> **Not sure which to use?** [See detailed comparison →](COMPARISON.md)
+
+---
+
 ## ⚡ What's New in v2.2.1
 
 **PARALLEL STRESS EDITION** - Fully optimized to match Oracle's monitoring methodology:
