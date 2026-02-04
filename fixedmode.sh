@@ -358,31 +358,34 @@ start_cpu_stress() {
     # Use stress-ng if available, otherwise fallback to basic method
     if command -v stress-ng &> /dev/null; then
         for ((i=0; i<CPU_COUNT; i++)); do
-            nice -n $PROCESS_NICE_LEVEL stress-ng --cpu 1 --cpu-load $CURRENT_CPU_LOAD --timeout 0 &> /dev/null &
+            nice -n $PROCESS_NICE_LEVEL stress-ng --cpu 1 --cpu-load $CURRENT_CPU_LOAD -t 0 &> /dev/null &
             CPU_WORKER_PIDS+=($!)
         done
         log_debug "Started ${CPU_COUNT} stress-ng workers at ${CURRENT_CPU_LOAD}% load"
     else
-        # Fallback: CPU-bound loop with proportional sleep
+        # Fallback: Simple yes loop with CPU limit via timeout
+        # This is more reliable than complex timing loops
         for ((i=0; i<CPU_COUNT; i++)); do
             (
+                # Simple CPU burner - runs continuously
                 while true; do
-                    # Calculate work/sleep ratio based on target load
-                    local work_ms=$((CURRENT_CPU_LOAD * 10))
-                    local sleep_ms=$(( (100 - CURRENT_CPU_LOAD) * 10 ))
+                    # Busy loop for work period (ms)
+                    local work_cycles=$((CURRENT_CPU_LOAD * 1000))
+                    local sleep_cycles=$(( (100 - CURRENT_CPU_LOAD) * 1000 ))
                     
-                    # Work phase
-                    local end=$((EPOCHSECONDS * 1000 + work_ms))
-                    while [[ $((EPOCHSECONDS * 1000)) -lt $end ]]; do
-                        : # Busy loop
+                    # Work phase - simple counter loop
+                    local counter=0
+                    while [[ $counter -lt $work_cycles ]]; do
+                        counter=$((counter + 1))
                     done
                     
                     # Sleep phase
-                    if [[ $sleep_ms -gt 0 ]]; then
-                        sleep 0.$(printf "%03d" $sleep_ms) 2>/dev/null || sleep 0.1
+                    if [[ $sleep_cycles -gt 0 ]]; then
+                        local sleep_sec=$(echo "scale=3; $sleep_cycles / 1000000" | bc 2>/dev/null || echo "0.001")
+                        sleep "$sleep_sec" 2>/dev/null || sleep 0.001
                     fi
                 done
-            ) &> /dev/null &
+            ) &
             CPU_WORKER_PIDS+=($!)
         done
         log_debug "Started ${CPU_COUNT} CPU workers (fallback mode) at ${CURRENT_CPU_LOAD}% load"

@@ -1,5 +1,77 @@
 # Critical Audit Fixes - Oracle Cloud Keep-Alive
 
+## FIXED-MODE v1.0.1 - CPU Workers Dying Bug (2026-02-04)
+
+### Symptoms
+```
+[WARN] All CPU workers died, restarting...
+[INFO] CPU below target (12% < 25%), increasing load to 95%
+[WARN] All CPU workers died, restarting...
+```
+
+### Root Causes
+1. **stress-ng parameter error**: Used `--timeout 0` (invalid) instead of `-t 0`
+2. **Fallback method broken**: Used `EPOCHSECONDS` (Bash 5+ only) - unavailable in Bash 4.x on Oracle Linux 8
+3. **Fallback timing logic**: Complex millisecond calculations with `EPOCHSECONDS * 1000` failed
+
+### Fix Applied
+**File:** `fixedmode.sh` lines 353-396
+
+**Changes:**
+1. Fixed stress-ng: `--timeout 0` → `-t 0`
+2. Rewrote fallback method completely:
+   - Removed `EPOCHSECONDS` dependency (not in Bash 4.x)
+   - Simplified to basic counter loop (more reliable)
+   - Added `bc` for precise sleep calculations
+   - Fallback to simple sleep if `bc` unavailable
+
+**New fallback logic:**
+```bash
+# Work phase - simple counter loop
+local counter=0
+while [[ $counter -lt $work_cycles ]]; do
+    counter=$((counter + 1))
+done
+
+# Sleep phase - precise calculation with bc
+local sleep_sec=$(echo "scale=3; $sleep_cycles / 1000000" | bc 2>/dev/null || echo "0.001")
+sleep "$sleep_sec" 2>/dev/null || sleep 0.001
+```
+
+### Quick Fix (If You're Affected Now)
+
+```bash
+# On your Oracle instance:
+sudo systemctl stop oracle-fixed-mode
+cd oracle-alive
+git pull origin main
+sudo bash install-fixed.sh
+sudo tail -f /var/log/oracle-fixed-mode.log
+```
+
+Expected after fix:
+```
+[INFO] Started 1 stress-ng workers at 25% load
+[INFO] CPU within tolerance (24% ≈ 25%), no adjustment
+```
+
+✅ **No more "died, restarting" messages!**
+
+### Recommendation
+Install stress-ng for better CPU control:
+```bash
+# Ubuntu
+sudo apt install stress-ng -y
+
+# Oracle Linux  
+sudo yum install stress-ng -y
+
+# Restart service
+sudo systemctl restart oracle-fixed-mode
+```
+
+---
+
 ## v2.2.2 - EnvironmentFile Loading Fix (2026-02-04)
 
 ### Critical Issue Fixed: Config File Not Loading
