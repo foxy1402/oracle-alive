@@ -1,6 +1,71 @@
 # Critical Audit Fixes - Oracle Cloud Keep-Alive
 
-## FIXED-MODE v1.0.1 - CPU Workers Dying Bug (2026-02-04)
+## FIXED-MODE v1.0.4 - stress-ng Compatibility Issue (2026-02-04)
+
+### Final Resolution: Use Fallback Method
+
+**Problem:** stress-ng kept dying immediately on Oracle Linux 8 when backgrounded with nohup and output redirection.
+
+**Symptoms:**
+```
+[WARN] All CPU workers died, restarting...
+[WARN] All CPU workers died, restarting...
+(repeating every 3 seconds)
+```
+
+**Root Cause:**
+- stress-ng v0.15.00 on Oracle Linux 8 (aarch64) doesn't handle being fully backgrounded with `nohup ... &>/dev/null &`
+- Processes exit immediately (likely due to stdout/stderr handling or signal handling)
+- Multiple fixes attempted:
+  - v1.0.1: Fixed `-t 0` parameter (invalid) → `-t 0` (timeout flag)
+  - v1.0.2: Changed to `-t 31536000` (1 year timeout)
+  - v1.0.3: Added `nohup`, sleep delay, PID logging
+  - All still resulted in immediate process death
+
+**Working Solution:**
+- **Use the fallback bash method** (pure bash counter loops with sleep)
+- Remove or don't install stress-ng on Oracle Linux 8 ARM instances
+- Fallback method is actually more reliable and simpler
+
+**Fallback Method (Proven Working):**
+```bash
+# Simple counter-based CPU load
+while true; do
+    local work_cycles=$((CURRENT_CPU_LOAD * 1000))
+    local sleep_cycles=$(( (100 - CURRENT_CPU_LOAD) * 1000 ))
+    
+    # Work phase
+    local counter=0
+    while [[ $counter -lt $work_cycles ]]; do
+        counter=$((counter + 1))
+    done
+    
+    # Sleep phase
+    local sleep_sec=$(echo "scale=3; $sleep_cycles / 1000000" | bc || echo "0.001")
+    sleep "$sleep_sec"
+done
+```
+
+**Verification:**
+```bash
+# After removing stress-ng:
+sudo rm /usr/bin/stress-ng
+sudo systemctl restart oracle-fixed-mode
+
+# Logs show stable operation:
+[INFO] CPU above target (31% > 25%), decreasing load to 20%
+[INFO] Memory above target (47% > 30%), decreasing to 1593MB
+# NO "died" warnings!
+```
+
+**Recommendation:**
+- **Oracle Linux 8 ARM:** Use fallback method (don't install stress-ng)
+- **Ubuntu x86_64:** stress-ng may work, but fallback is proven reliable
+- **Single-CPU instances:** Fallback is sufficient and lightweight
+
+---
+
+## FIXED-MODE v1.0.1-1.0.3 - CPU Workers Dying Bug (2026-02-04)
 
 ### Symptoms
 ```
