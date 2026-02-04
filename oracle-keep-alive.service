@@ -1,5 +1,5 @@
 [Unit]
-Description=Oracle Cloud Keep-Alive Service v2.1 (Intelligent Multi-Metric Edition)
+Description=Oracle Cloud Keep-Alive Service v2.2 (Parallel Stress Edition)
 Documentation=https://github.com/foxy1402/oracle-alive
 After=network-online.target
 Wants=network-online.target

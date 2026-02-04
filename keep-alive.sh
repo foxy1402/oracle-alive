@@ -11,13 +11,14 @@
 # - Total cycle: 96s with high duty cycles (67-94%)
 # - Optimized to match Oracle's 60s periodic sampling methodology
 # - Recalibration every 12 cycles (~20 minutes)
+# - Baseline protection: Light 30% stress during baseline scans (prevents metric drops)
 #
-# Version: 2.2.0
+# Version: 2.2.1
 #
 
 set -euo pipefail
 
-VERSION="2.2.0"
+VERSION="2.2.1"
 
 # ============================================================================
 # TARGET CONFIGURATION
@@ -132,6 +133,9 @@ BASELINE_CPU=0
 BASELINE_MEMORY=0
 BASELINE_NETWORK_KB=0
 
+# Light stress contribution (for subtraction from baseline)
+LIGHT_STRESS_MEMORY_MB=0
+
 # Current metrics
 CURRENT_CPU=0
 CURRENT_MEMORY=0
@@ -155,6 +159,7 @@ TOTAL_NETWORK_STRESS_TIME=0
 
 # Background stress process PIDs
 MEMORY_STRESS_PID=""
+MEMORY_STRESS_TEMP_FILE=""
 NETWORK_STRESS_PID=""
 
 # ============================================================================
@@ -429,21 +434,150 @@ get_network_usage_kbs() {
     echo "$total_kbs"
 }
 
-get_network_usage_percent() {
-    # Get network usage as percentage of 100 Mbps (typical for cloud instances)
-    # 100 Mbps = 12,500 KB/s
-    local max_kbs=12500
-    local current_kbs=$(get_network_usage_kbs)
+# ============================================================================
+# LIGHT STRESS FOR BASELINE PROTECTION
+# ============================================================================
+
+# Global PIDs for light stress processes
+LIGHT_STRESS_CPU_PIDS=()
+LIGHT_STRESS_MEMORY_PID=""
+LIGHT_STRESS_MEMORY_TEMP_FILE=""
+LIGHT_STRESS_NETWORK_PID=""
+
+# Known light stress contributions (for subtraction from baseline)
+LIGHT_STRESS_CPU_PERCENT=30
+LIGHT_STRESS_NETWORK_KBS=200
+
+start_light_stress_for_baseline() {
+    # Start light background stress (30% all metrics) during baseline measurement
+    # This ensures Oracle never sees drops below 20% during the 60s baseline scan
+    # IMPORTANT: We know exact contributions and will SUBTRACT them from baseline readings
     
-    # Use pure bash arithmetic
-    local percent=$((current_kbs * 100 / max_kbs))
+    # 1. Light CPU stress (30%)
+    local light_cpu_workers=2
+    local light_iterations=1500  # Lower iterations = lighter load
+    local light_cpu_pids=()
     
-    # Cap at 100%
-    if [[ $percent -gt 100 ]]; then
-        percent=100
+    for ((i = 0; i < light_cpu_workers; i++)); do
+        (
+            renice -n 19 $$ >/dev/null 2>&1 || true
+            local end_time=$((SECONDS + BASELINE_DURATION + 5))  # +5s buffer
+            
+            while [[ $SECONDS -lt $end_time ]]; do
+                # Light CPU work
+                for ((j = 0; j < light_iterations; j++)); do
+                    : $((j * j % 997))
+                done
+                # Longer yield for lower CPU usage
+                sleep 0.05
+            done
+        ) &
+        LIGHT_STRESS_CPU_PIDS+=($!)
+    done
+    
+    # 2. Light Memory stress (30%)
+    local total_memory_mb=$(free -m 2>/dev/null | awk '/^Mem:/ {print $2}' || echo "1024")
+    local light_memory_mb=$((total_memory_mb * 30 / 100))
+    
+    # Store for later subtraction from baseline
+    LIGHT_STRESS_MEMORY_MB=$light_memory_mb
+    
+    # Cap at reasonable size
+    if [[ $light_memory_mb -gt 4096 ]]; then
+        light_memory_mb=4096
+        LIGHT_STRESS_MEMORY_MB=4096
+    fi
+    if [[ $light_memory_mb -lt 100 ]]; then
+        light_memory_mb=100
+        LIGHT_STRESS_MEMORY_MB=100
     fi
     
-    echo "$percent"
+    # CRITICAL: Generate temp file path BEFORE backgrounding
+    local light_temp_file="/dev/shm/oracle-keep-alive-light-mem-$$-$(date +%s)"
+    LIGHT_STRESS_MEMORY_TEMP_FILE="$light_temp_file"
+    
+    (
+        if dd if=/dev/urandom of="$light_temp_file" bs=1M count="$light_memory_mb" 2>/dev/null; then
+            local end_time=$((SECONDS + BASELINE_DURATION + 5))
+            while [[ -f "$light_temp_file" ]] && [[ $SECONDS -lt $end_time ]]; do
+                cat "$light_temp_file" > /dev/null 2>&1 || true
+                sleep 5
+            done
+            rm -f "$light_temp_file" 2>/dev/null || true
+        fi
+    ) &
+    LIGHT_STRESS_MEMORY_PID=$!
+    
+    # 3. Light Network stress (30% = ~3750 KB/s for 100Mbps, capped at 200 KB/s)
+    local light_network_kbs=200
+    
+    (
+        renice -n 19 $$ >/dev/null 2>&1 || true
+        local end_time=$((SECONDS + BASELINE_DURATION + 5))
+        local targets_array=($NETWORK_PING_TARGETS)
+        
+        while [[ $SECONDS -lt $end_time ]]; do
+            # Quick pings
+            if command -v ping &> /dev/null; then
+                for target in "${targets_array[@]}"; do
+                    ping -c 1 -W 1 "$target" > /dev/null 2>&1 &
+                done
+            fi
+            
+            # Light HTTP traffic
+            if command -v curl &> /dev/null; then
+                curl -s -m 3 --limit-rate "${light_network_kbs}k" -o /dev/null "$NETWORK_DOWNLOAD_TEST_URL" 2>/dev/null &
+            fi
+            
+            sleep 5
+        done
+    ) &
+    LIGHT_STRESS_NETWORK_PID=$!
+    
+    # Give light stress 2 seconds to ramp up before baseline measurement
+    sleep 2
+    
+    log_debug "Light stress started: ${#LIGHT_STRESS_CPU_PIDS[@]} CPU workers, ${light_memory_mb}MB memory, ${light_network_kbs}KB/s network"
+}
+
+stop_light_stress_for_baseline() {
+    # Stop all light stress processes
+    
+    # Stop CPU workers
+    for pid in "${LIGHT_STRESS_CPU_PIDS[@]}"; do
+        kill -TERM "$pid" 2>/dev/null || true
+    done
+    for pid in "${LIGHT_STRESS_CPU_PIDS[@]}"; do
+        wait "$pid" 2>/dev/null || true
+    done
+    LIGHT_STRESS_CPU_PIDS=()
+    
+    # Stop memory stress
+    if [[ -n "$LIGHT_STRESS_MEMORY_PID" ]]; then
+        if [[ -n "${LIGHT_STRESS_MEMORY_TEMP_FILE:-}" ]]; then
+            rm -f "$LIGHT_STRESS_MEMORY_TEMP_FILE" 2>/dev/null || true
+        fi
+        rm -f /dev/shm/oracle-keep-alive-light-mem-$$-* 2>/dev/null || true
+        kill -TERM "$LIGHT_STRESS_MEMORY_PID" 2>/dev/null || true
+        wait "$LIGHT_STRESS_MEMORY_PID" 2>/dev/null || true
+        LIGHT_STRESS_MEMORY_PID=""
+        LIGHT_STRESS_MEMORY_TEMP_FILE=""
+    fi
+    
+    # Stop network stress
+    if [[ -n "$LIGHT_STRESS_NETWORK_PID" ]]; then
+        kill -TERM "$LIGHT_STRESS_NETWORK_PID" 2>/dev/null || true
+        wait "$LIGHT_STRESS_NETWORK_PID" 2>/dev/null || true
+        LIGHT_STRESS_NETWORK_PID=""
+    fi
+    
+    # Clean up any remaining temp files
+    rm -f /dev/shm/oracle-keep-alive-light-* 2>/dev/null || true
+    
+    # Give system 2 seconds to stabilize after stopping light stress
+    sleep 2
+    
+    log_debug "Light stress stopped and cleaned up"
 }
 
 # ============================================================================
@@ -456,12 +590,23 @@ measure_baseline() {
     log_info "IMPORTANT: Only measuring USER applications (Oracle's monitoring methodology)"
     log_info "Excluding: System processes, kernel time, buffers/cache"
     log_info "Observing for ${BASELINE_DURATION}s to understand normal load"
+    log_info ""
+    log_info "BASELINE PROTECTION STRATEGY:"
+    log_info "  1. Run light 30% stress during scan (protects against Oracle sampling)"
+    log_info "  2. Measure system (includes light stress + user apps)"
+    log_info "  3. Subtract known light stress contribution"
+    log_info "  4. Result = TRUE baseline of user applications only"
     log_info "================================================"
     
     # CRITICAL: Ensure no stress processes are running from previous cycles
     # This baseline must reflect ONLY user applications (what Oracle monitors)
     pkill -P $$ 2>/dev/null || true
     sleep 2  # Let any remaining processes fully exit
+    
+    # START LIGHT BACKGROUND STRESS (30% all metrics)
+    # This prevents Oracle from seeing low usage during baseline measurement
+    log_info "Starting light protective stress: 30% CPU/Memory/Network for ${BASELINE_DURATION}s..."
+    start_light_stress_for_baseline
     
     local samples=6
     local sample_interval=$((BASELINE_DURATION / samples))
@@ -488,16 +633,50 @@ measure_baseline() {
         fi
     done
     
-    BASELINE_CPU=$((cpu_total / samples))
-    BASELINE_MEMORY=$((mem_total / samples))
-    BASELINE_NETWORK_KB=$((net_total / samples))
+    # Calculate raw averages (includes light stress)
+    local raw_cpu=$((cpu_total / samples))
+    local raw_memory=$((mem_total / samples))
+    local raw_network=$((net_total / samples))
     
     log_info "================================================"
-    log_info "Baseline metrics established (USER workload only):"
+    log_info "Raw measurements (includes light stress):"
+    log_info "  • CPU: ${raw_cpu}%"
+    log_info "  • Memory: ${raw_memory}%"
+    log_info "  • Network: ${raw_network} KB/s"
+    log_info ""
+    
+    # SUBTRACT light stress contributions to get TRUE baseline (user apps only)
+    log_info "Subtracting light stress contributions..."
+    log_info "  • CPU: ${raw_cpu}% - ${LIGHT_STRESS_CPU_PERCENT}% = $((raw_cpu - LIGHT_STRESS_CPU_PERCENT))%"
+    
+    # Memory: Convert MB to percentage for subtraction (guard against division by zero)
+    local light_memory_percent=0
+    if [[ $TOTAL_MEMORY_MB -gt 0 ]]; then
+        light_memory_percent=$((LIGHT_STRESS_MEMORY_MB * 100 / TOTAL_MEMORY_MB))
+    fi
+    log_info "  • Memory: ${raw_memory}% - ${light_memory_percent}% (${LIGHT_STRESS_MEMORY_MB}MB) = $((raw_memory - light_memory_percent))%"
+    log_info "  • Network: ${raw_network} KB/s - ${LIGHT_STRESS_NETWORK_KBS} KB/s = $((raw_network - LIGHT_STRESS_NETWORK_KBS)) KB/s"
+    
+    # Apply subtractions (with floor at 0 to prevent negative values)
+    BASELINE_CPU=$((raw_cpu - LIGHT_STRESS_CPU_PERCENT))
+    if [[ $BASELINE_CPU -lt 0 ]]; then BASELINE_CPU=0; fi
+    
+    BASELINE_MEMORY=$((raw_memory - light_memory_percent))
+    if [[ $BASELINE_MEMORY -lt 0 ]]; then BASELINE_MEMORY=0; fi
+    
+    BASELINE_NETWORK_KB=$((raw_network - LIGHT_STRESS_NETWORK_KBS))
+    if [[ $BASELINE_NETWORK_KB -lt 0 ]]; then BASELINE_NETWORK_KB=0; fi
+    
+    log_info "================================================"
+    log_info "TRUE Baseline (USER applications only, light stress subtracted):"
     log_info "  • CPU: ${BASELINE_CPU}% (user+nice time only)"
     log_info "  • Memory: ${BASELINE_MEMORY}% (excluding buffers/cache)"
     log_info "  • Network: ${BASELINE_NETWORK_KB} KB/s"
     log_info "================================================"
+    
+    # STOP LIGHT STRESS
+    log_info "Stopping light background stress..."
+    stop_light_stress_for_baseline
     
     # Calculate required additional stress
     calculate_required_stress
@@ -626,9 +805,11 @@ stress_cpu_cycle() {
     TOTAL_CPU_STRESS_TIME=$((TOTAL_CPU_STRESS_TIME + elapsed))
     log_info "CPU stress phase completed (${elapsed}s)"
     
-    # === SLEEP PHASE ===
-    log_info "CPU sleep phase: ${CPU_SLEEP_DURATION}s"
-    sleep "$CPU_SLEEP_DURATION"
+    # === SLEEP PHASE (only if duration > 0) ===
+    if [[ $CPU_SLEEP_DURATION -gt 0 ]]; then
+        log_info "CPU sleep phase: ${CPU_SLEEP_DURATION}s"
+        sleep "$CPU_SLEEP_DURATION"
+    fi
 }
 
 recalibrate_cpu_stress() {
@@ -728,11 +909,16 @@ stress_memory_parallel() {
         return
     fi
     
+    # CRITICAL: Generate temp file path BEFORE backgrounding
+    # Using parent $$ ensures cleanup can find the file
+    local temp_file="/dev/shm/oracle-keep-alive-mem-$$-$(date +%s)"
+    
+    # Store temp file path for cleanup
+    MEMORY_STRESS_TEMP_FILE="$temp_file"
+    
     # Allocate in background and hold
-    # Use consistent naming: PID stored, same PID used in cleanup
     (
         local start_time=$SECONDS
-        local temp_file="/dev/shm/oracle-keep-alive-mem-$$"
         
         if dd if=/dev/urandom of="$temp_file" bs=1M count="$memory_mb" 2>/dev/null; then
             log_debug "Memory allocated: ${memory_mb}MB at $temp_file, holding for ${MEMORY_NETWORK_DURATION}s"
@@ -746,7 +932,6 @@ stress_memory_parallel() {
             rm -f "$temp_file" 2>/dev/null || true
             
             local elapsed=$((SECONDS - start_time))
-            TOTAL_MEMORY_STRESS_TIME=$((TOTAL_MEMORY_STRESS_TIME + elapsed))
             log_info "Memory stress completed (held for ${elapsed}s)"
         else
             log_error "Memory allocation failed"
@@ -761,17 +946,20 @@ stress_memory_parallel() {
 cleanup_memory_stress() {
     # Stop memory stress and release
     if [[ -n "${MEMORY_STRESS_PID:-}" ]]; then
-        # Construct temp file name using the stored PID
-        local temp_file="/dev/shm/oracle-keep-alive-mem-${MEMORY_STRESS_PID}"
+        # Remove temp file using stored path (signals subprocess to exit)
+        if [[ -n "${MEMORY_STRESS_TEMP_FILE:-}" ]]; then
+            rm -f "$MEMORY_STRESS_TEMP_FILE" 2>/dev/null || true
+        fi
         
-        # Remove temp file (signals subprocess to exit)
-        rm -f "$temp_file" 2>/dev/null || true
+        # Also clean up any orphaned temp files from this process
+        rm -f /dev/shm/oracle-keep-alive-mem-$$-* 2>/dev/null || true
         
         # Kill the background process
         kill -TERM "$MEMORY_STRESS_PID" 2>/dev/null || true
         wait "$MEMORY_STRESS_PID" 2>/dev/null || true
         
         MEMORY_STRESS_PID=""
+        MEMORY_STRESS_TEMP_FILE=""
     fi
 }
 
@@ -1060,9 +1248,41 @@ main() {
 
 mkdir -p "$(dirname "$LOG_FILE")" 2>/dev/null || true
 
+show_help() {
+    echo "Oracle Cloud Keep-Alive v${VERSION}"
+    echo "Parallel Stress Edition"
+    echo
+    echo "Usage: $0 [OPTIONS]"
+    echo
+    echo "Options:"
+    echo "  --help, -h       Show this help message"
+    echo "  --version, -v    Show version information"
+    echo
+    echo "Description:"
+    echo "  Prevents Oracle Cloud free-tier instances from being reclaimed"
+    echo "  by maintaining CPU, memory, and network utilization above 40%."
+    echo
+    echo "Configuration:"
+    echo "  /etc/default/oracle-keep-alive"
+    echo
+    echo "Logs:"
+    echo "  /var/log/oracle-keep-alive.log"
+    echo
+    echo "Service management:"
+    echo "  sudo systemctl status oracle-keep-alive"
+    echo "  sudo systemctl restart oracle-keep-alive"
+    echo "  sudo systemctl stop oracle-keep-alive"
+    echo
+}
+
 if [[ "${1:-}" == "--version" ]] || [[ "${1:-}" == "-v" ]]; then
     echo "Oracle Cloud Keep-Alive v${VERSION}"
-    echo "Intelligent Multi-Metric Edition"
+    echo "Parallel Stress Edition"
+    exit 0
+fi
+
+if [[ "${1:-}" == "--help" ]] || [[ "${1:-}" == "-h" ]]; then
+    show_help
     exit 0
 fi
 

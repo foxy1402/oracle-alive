@@ -10,7 +10,7 @@
 
 set -euo pipefail
 
-VERSION="2.1.0"
+VERSION="2.2.0"
 
 # Colors
 RED='\033[0;31m'
@@ -30,7 +30,7 @@ print_header() {
     echo -e "${BLUE}"
     echo "╔════════════════════════════════════════════════════════════════╗"
     echo "║     Oracle Cloud Keep-Alive Installer v${VERSION}             ║"
-    echo "║     Intelligent Multi-Metric Edition                          ║"
+    echo "║     Parallel Stress Edition                                    ║"
     echo "╚════════════════════════════════════════════════════════════════╝"
     echo -e "${NC}"
 }
@@ -272,50 +272,53 @@ install() {
     elif [[ ! -f "$CONFIG_FILE" ]]; then
         print_info "Creating default configuration..."
         cat > "$CONFIG_FILE" << 'EOF'
-# Oracle Cloud Keep-Alive Configuration v2.0
-# Gaming VPN Optimized Settings
+# Oracle Cloud Keep-Alive Configuration v2.2
+# Parallel Stress Edition
 
-# Timing
-STRESS_DURATION=45
-SLEEP_DURATION=480
+# Target Metrics (40% = double Oracle's 20% minimum)
+TARGET_CPU_PERCENT=40
+TARGET_MEMORY_PERCENT=40
+TARGET_NETWORK_PERCENT=40
+SAFETY_MARGIN=5
 
-# CPU
+# CPU Stress Configuration
 STRESS_CPU=1
-TARGET_CPU_PERCENT=95
+CPU_STRESS_PERCENT=50
+CPU_STRESS_DURATION=64
+CPU_SLEEP_DURATION=0
+CPU_RECALIBRATION_CYCLES=12
+CPU_STRESS_FLOOR=40
 CPU_WORKERS=""
 
-# Memory
+# Memory Stress Configuration
 STRESS_MEMORY=1
-MEMORY_STRESS_MB=150
-MEMORY_HOLD_DURATION=10
+MEMORY_STRESS_MB=500
+MEMORY_NETWORK_DURATION=90
 
-# Network (Gaming Optimized)
+# Network Stress Configuration (Gaming Optimized)
 STRESS_NETWORK=1
 NETWORK_STRESS_MODE="smart"
-NETWORK_BANDWIDTH_LIMIT_KBS=100
+NETWORK_BANDWIDTH_LIMIT_KBS=500
 NETWORK_USE_DISTRIBUTED_TARGETS=1
 NETWORK_PING_TARGETS="8.8.8.8 8.8.4.4 1.1.1.1 1.0.0.1 208.67.222.222 208.67.220.220"
-NETWORK_PINGS_PER_TARGET=5
-NETWORK_PING_INTERVAL=0.3
 NETWORK_HTTP_TARGETS="http://www.google.com/generate_204 http://detectportal.firefox.com/success.txt http://captive.apple.com/hotspot-detect.html https://www.cloudflare.com/cdn-cgi/trace"
-NETWORK_HTTP_REQUESTS=10
-NETWORK_HTTP_TIMEOUT=3
 NETWORK_ENABLE_DOWNLOAD_TEST=1
 NETWORK_DOWNLOAD_TEST_URL="http://speedtest.ftp.otenet.gr/files/test100k.db"
 NETWORK_USE_TRAFFIC_SHAPING=1
 NETWORK_TRAFFIC_PRIORITY=7
 
+# Monitoring
+MONITORING_INTERVAL=300
+BASELINE_DURATION=60
+
 # Logging
 LOG_FILE=/var/log/oracle-keep-alive.log
 LOG_LEVEL=INFO
-LOG_STATS_EVERY_N_CYCLES=12
+LOG_STATS_EVERY_N_CYCLES=6
 
 # Advanced
 PROCESS_NICE_LEVEL=19
 IO_SCHEDULING_CLASS=idle
-AUTO_ADJUST_INTENSITY=1
-METRIC_CHECK_INTERVAL=15
-ENABLE_FAILSAFE_MODE=1
 EOF
         print_success "Created default configuration"
     else
@@ -374,11 +377,11 @@ LOGROTATE
     
     # Show configuration summary
     echo -e "${CYAN}Configuration Summary:${NC}"
-    echo "  • Stress Duration: 45s (active)"
-    echo "  • Sleep Duration: 480s (8 minutes)"
-    echo "  • Expected Avg CPU: ~8%"
+    echo "  • Cycle Duration: 96s (64s CPU + 90s Memory/Network parallel)"
+    echo "  • Target All Metrics: 45% (40% + 5% margin)"
+    echo "  • CPU Recalibration: Every 12 cycles (~20 minutes)"
     echo "  • Network Mode: Smart (gaming-optimized)"
-    echo "  • Bandwidth Limit: 100 KB/s"
+    echo "  • Bandwidth Limit: 500 KB/s"
     echo
     
     echo -e "${CYAN}Useful Commands:${NC}"
@@ -433,13 +436,13 @@ show_help() {
 
 show_version() {
     echo "Oracle Cloud Keep-Alive Installer v${VERSION}"
-    echo "Intelligent Multi-Metric Edition"
+    echo "Parallel Stress Edition"
     echo
     echo "Features:"
-    echo "  • Automatic baseline detection"
-    echo "  • Smart gap calculation"
-    echo "  • Dynamic stress adjustment"
-    echo "  • Triple protection (CPU/Memory/Network)"
+    echo "  • Parallel CPU/Memory/Network stress"
+    echo "  • 96-second cycles (67% CPU duty, 94% memory/network duty)"
+    echo "  • Matches Oracle's monitoring methodology exactly"
+    echo "  • Dynamic CPU recalibration every 20 minutes"
     echo "  • Gaming-friendly (won't lag your VPN)"
     echo
 }

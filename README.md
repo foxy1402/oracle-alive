@@ -6,7 +6,7 @@ Works on Oracle Linux and Ubuntu (both x86_64 and ARM instances).
 
 ---
 
-## ⚡ What's New in v2.2
+## ⚡ What's New in v2.2.1
 
 **PARALLEL STRESS EDITION** - Fully optimized to match Oracle's monitoring methodology:
 
@@ -16,6 +16,8 @@ Works on Oracle Linux and Ubuntu (both x86_64 and ARM instances).
 - 🔄 **Dynamic Recalibration**: Auto-adjusts every 12 cycles (~20 minutes)
 - ⏱️ **Predictable Timing**: 96-second cycles (64s CPU + 90s memory/network overlap)
 - 🎮 **Gaming-Friendly**: Consistent patterns, no surprise spikes
+- 🛡️ **Baseline Protection**: Runs light 30% stress during baseline scans to prevent metric drops
+- 🔧 **v2.2.1 Fixes**: Critical bug fixes for memory cleanup, improved reliability
 
 ---
 
@@ -365,5 +367,5 @@ Created to help the community keep their free Oracle Cloud instances alive.
 
 ---
 
-**Version:** 2.2.0 (Parallel Stress Edition)  
+**Version:** 2.2.1 (Parallel Stress Edition)  
 **Compatibility:** Oracle Linux 8/9, Ubuntu 20.04/22.04, Ubuntu Minimal (x86_64 and ARM)
