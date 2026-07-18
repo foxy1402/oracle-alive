@@ -26,7 +26,7 @@ cd oracle-alive
 sudo bash install-fixed.sh
 ```
 
-**Done!** Script is running with defaults: CPU 25%, Memory 30%, Network 30%
+**Done!** Script is running with defaults: CPU 25%, Memory 30% (network stress disabled)
 
 ---
 
@@ -43,12 +43,11 @@ You should see:
 [INFO] Target Utilization:
 [INFO]   • CPU: 25%
 [INFO]   • Memory: 30%
-[INFO]   • Network: 30%
+[INFO]   • Network: disabled
 [INFO] Starting initial stress processes...
 [INFO] Entering continuous monitoring mode (3s interval)
 [INFO] CPU below target (10% < 25%), increasing load to 20%
 [INFO] Memory below target (15% < 30%), increasing to 500MB
-[INFO] Network below target (50 < 5625KB/s), increasing to 200KB/s
 ```
 
 Press `Ctrl+C` to exit log view.
@@ -68,7 +67,6 @@ sudo nano /etc/default/oracle-fixed-mode
 ```bash
 TARGET_CPU_PERCENT=25      # ← Your desired CPU %
 TARGET_MEMORY_PERCENT=30   # ← Your desired RAM %
-TARGET_NETWORK_PERCENT=30  # ← Your desired Network %
 ```
 
 **Save:** `Ctrl+O`, `Enter`, `Ctrl+X`
@@ -80,12 +78,12 @@ sudo systemctl restart oracle-fixed-mode
 
 ### Recommended Targets for 1-CPU Instances
 
-| Use Case | CPU | RAM | Network | Why |
-|----------|-----|-----|---------|-----|
-| **Minimal overhead** | 22% | 25% | 25% | Just above Oracle's 20% minimum |
-| **Safe default** ✅ | 25% | 30% | 30% | 25-50% above minimum, good balance |
-| **Extra safety** | 30% | 35% | 35% | 50-75% above minimum, more headroom |
-| **Maximum safety** | 35% | 40% | 40% | 75-100% above minimum, overkill but safe |
+| Use Case | CPU | RAM | Why |
+|----------|-----|-----|-----|
+| **Minimal overhead** | 22% | 25% | Just above Oracle's 20% minimum |
+| **Safe default** ✅ | 25% | 30% | 25-50% above minimum, good balance |
+| **Extra safety** | 30% | 35% | 50-75% above minimum, more headroom |
+| **Maximum safety** | 35% | 40% | 75-100% above minimum, overkill but safe |
 
 ---
 
@@ -93,13 +91,12 @@ sudo systemctl restart oracle-fixed-mode
 
 1. Go to: **Oracle Cloud Console → Compute → Instances → [Your Instance] → Metrics**
 2. Wait: **60 minutes** for data to populate
-3. Expect: **Three flat horizontal lines** at your target percentages
+3. Expect: **Two flat horizontal lines** at your target percentages
 
 ### Perfect Results:
 ```
-CPU Usage:     ▬▬▬▬▬▬▬▬▬▬▬▬▬ 25% (stable)
-Memory Usage:  ▬▬▬▬▬▬▬▬▬▬▬▬▬▬ 30% (stable)
-Network TX+RX: ▬▬▬▬▬▬▬▬▬▬▬▬▬▬ 30% (stable)
+CPU Usage:    ▬▬▬▬▬▬▬▬▬▬▬▬▬ 25% (stable)
+Memory Usage: ▬▬▬▬▬▬▬▬▬▬▬▬▬▬ 30% (stable)
 ```
 
 ✅ **Your instance is safe from Oracle's 7-day reclaim policy!**
@@ -202,14 +199,14 @@ sudo systemctl restart oracle-fixed-mode
 ### Q: What if I'm running a web server?
 **A:** Set lower targets: CPU 20%, RAM 25%, Network 25%. This leaves plenty of room for your web traffic.
 
-### Q: Can I disable one metric?
-**A:** Not recommended. Oracle reclaims if **ALL THREE** are below 20%. Keep all three above 20% to be safe.
+### Q: Can I enable network stress too?
+**A:** Yes. Add `ENABLE_NETWORK=true` and `TARGET_NETWORK_PERCENT=30` to `/etc/default/oracle-fixed-mode`, then restart.
 
 ### Q: How do I know it's working?
 **A:** Check Oracle Console metrics after 1 hour. You'll see stable horizontal lines at your targets.
 
 ### Q: Does this cost money?
-**A:** No! Uses **free outbound network traffic** (first 10TB/month free). CPU and memory are always free.
+**A:** No! CPU and memory stress generate no outbound traffic. If you enable network stress, Oracle gives 10TB/month free outbound.
 
 ### Q: What if Oracle changes their policy?
 **A:** Script can be adjusted. Just update targets in `/etc/default/oracle-fixed-mode` and restart.
@@ -221,16 +218,14 @@ sudo systemctl restart oracle-fixed-mode
 - ✅ **You're done!** Script is protecting your instance 24/7
 - 📊 Check Oracle Console in 1 hour to verify metrics
 - 🔧 Customize targets if needed (see Step 3)
-- 📚 Read full docs: [README-FIXED.md](README-FIXED.md)
-- 🆚 Compare with intelligent mode: [COMPARISON.md](COMPARISON.md)
+- 📚 Read full docs: [README.md](README.md)
 
 ---
 
 ## Support
 
-- **Issues?** Check [README-FIXED.md Troubleshooting](README-FIXED.md#-troubleshooting)
+- **Issues?** Check [README.md Troubleshooting](README.md#-troubleshooting)
 - **Questions?** Open a GitHub issue
-- **Want to switch modes?** See [COMPARISON.md Migration Guide](COMPARISON.md#migration-between-modes)
 
 ---
 

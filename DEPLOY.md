@@ -10,7 +10,7 @@ I've created a **complete fixed-mode keep-alive system** optimized for your **si
 
 ### Core Files (Ready to Use)
 1. **fixedmode.sh** - The main script that runs 24/7
-   - Monitors CPU, RAM, Network every 3 seconds
+   - Monitors CPU and RAM every 3 seconds
    - Adjusts stress to hit your exact targets
    - Self-heals if processes die
    - **Caps CPU at 95%** to prevent lockup on single-CPU systems
@@ -22,14 +22,13 @@ I've created a **complete fixed-mode keep-alive system** optimized for your **si
    - Starts everything for you
 
 3. **config-fixed.env** - Your configuration file
-   - Set exact targets: CPU 25%, RAM 30%, Network 30%
-   - Tune control loop behavior
+   - Set exact targets: CPU 25%, RAM 30%
+   - Network stress disabled by default
    - All settings explained with comments
 
 ### Documentation (Your Guides)
 1. **QUICKSTART-FIXED.md** - Start here! 2-minute setup
-2. **README-FIXED.md** - Complete user manual
-3. **COMPARISON.md** - Fixed vs Intelligent mode comparison
+2. **README.md** - Complete user manual
 
 ---
 
@@ -61,7 +60,7 @@ sudo bash install-fixed.sh
 That's it! The script is now running with these defaults:
 - **CPU Target:** 25% (25% above Oracle's minimum)
 - **Memory Target:** 30%
-- **Network Target:** 30%
+- **Network Stress:** disabled by default
 
 ### Step 3: Verify It's Working
 
@@ -76,7 +75,7 @@ You should see:
 [INFO] Target Utilization:
 [INFO]   • CPU: 25%
 [INFO]   • Memory: 30%
-[INFO]   • Network: 30%
+[INFO]   • Network: disabled
 [INFO] Entering continuous monitoring mode (3s interval)
 [INFO] CPU below target (10% < 25%), increasing load to 20%
 [INFO] Memory below target (15% < 30%), increasing to 500MB
@@ -88,13 +87,12 @@ Press `Ctrl+C` when you see it adjusting metrics.
 
 1. Go to: **Oracle Cloud Console → Compute → Instances → [Your Instance] → Metrics**
 2. Wait: **60 minutes** for data to show up
-3. Expect: **Three stable horizontal lines** at your targets
+3. Expect: **Two stable horizontal lines** at your targets
 
 **Perfect results look like this:**
 ```
-CPU Usage:     ▬▬▬▬▬▬▬▬▬▬▬▬▬ 25% (flat line)
-Memory Usage:  ▬▬▬▬▬▬▬▬▬▬▬▬▬▬ 30% (flat line)
-Network TX+RX: ▬▬▬▬▬▬▬▬▬▬▬▬▬▬ 30% (flat line)
+CPU Usage:    ▬▬▬▬▬▬▬▬▬▬▬▬▬ 25% (flat line)
+Memory Usage: ▬▬▬▬▬▬▬▬▬▬▬▬▬▬ 30% (flat line)
 ```
 
 ✅ **If you see flat lines at your targets, you're done!** Your instance will never be reclaimed by Oracle.
@@ -114,7 +112,6 @@ sudo nano /etc/default/oracle-fixed-mode
 ```bash
 TARGET_CPU_PERCENT=25      # ← Change this (recommend 20-35)
 TARGET_MEMORY_PERCENT=30   # ← Change this (recommend 25-40)
-TARGET_NETWORK_PERCENT=30  # ← Change this (recommend 25-40)
 ```
 
 **Save:** `Ctrl+O`, `Enter`, `Ctrl+X`
@@ -126,14 +123,14 @@ sudo systemctl restart oracle-fixed-mode
 
 ### Recommended Targets for Your 1-CPU Instance
 
-| Scenario | CPU | RAM | Network | Why |
-|----------|-----|-----|---------|-----|
-| **Minimal** | 22% | 25% | 25% | Just above 20% minimum |
-| **Balanced** ✅ | 25% | 30% | 30% | Good safety margin (default) |
-| **Safe** | 30% | 35% | 35% | Extra headroom |
-| **Very Safe** | 35% | 40% | 40% | Maximum protection |
+| Scenario | CPU | RAM | Why |
+|----------|-----|-----|-----|
+| **Minimal** | 22% | 25% | Just above 20% minimum |
+| **Balanced** ✅ | 25% | 30% | Good safety margin (default) |
+| **Safe** | 30% | 35% | Extra headroom |
+| **Very Safe** | 35% | 40% | Maximum protection |
 
-**Note:** Never go below 20% on any metric! Oracle will reclaim if ALL THREE drop below 20% for 7 days.
+**Note:** Oracle reclaims if CPU and RAM both stay below 20% for 7 days.
 
 ---
 
@@ -178,9 +175,8 @@ Your instance will be **safe from reclaim** AND **remain responsive** for your o
 ## 📚 Documentation Quick Links
 
 - **Quick Start:** [QUICKSTART-FIXED.md](QUICKSTART-FIXED.md) - 2-minute setup
-- **Full Manual:** [README-FIXED.md](README-FIXED.md) - Everything you need to know
-- **Comparison:** [COMPARISON.md](COMPARISON.md) - Fixed vs Intelligent mode
-- **Troubleshooting:** [README-FIXED.md#troubleshooting](README-FIXED.md#-troubleshooting)
+- **Full Manual:** [README.md](README.md) - Everything you need to know
+- **Troubleshooting:** [README.md#troubleshooting](README.md#-troubleshooting)
 
 ---
 
@@ -189,26 +185,23 @@ Your instance will be **safe from reclaim** AND **remain responsive** for your o
 ### Continuous Monitoring Loop
 ```
 Every 3 seconds:
-1. Measure current CPU, Memory, Network usage
+1. Measure current CPU and Memory usage
 2. Compare to your targets
 3. Too low? Increase stress by +5% (CPU) or +100MB (RAM)
 4. Too high? Decrease stress by -5% (CPU) or -100MB (RAM)
-5. Within ±2-3%? Do nothing (prevents thrashing)
-6. Check if stress processes are alive (self-heal)
-7. Repeat
+5. Check if stress processes are alive (self-heal)
+6. Repeat
 ```
 
 ### Single-CPU Safety
 - **Proportional control:** Gradual approach to target
 - **95% cap:** Hard limit prevents hitting 100%
 - **Nice level 19:** Your apps always get CPU first
-- **Tolerance zone:** ±2% prevents constant micro-adjustments
 
 ### Oracle Compliance
 The script measures **exactly what Oracle monitors**:
 - **CPU:** USER + NICE time only (not system/kernel)
 - **Memory:** Application memory (total - available, excludes buffers)
-- **Network:** Total interface traffic (TX + RX)
 
 This ensures your dashboard matches Oracle's reclaim calculations.
 
@@ -225,18 +218,15 @@ This ensures your dashboard matches Oracle's reclaim calculations.
 ### Q: How do I know it's working?
 **A:** Check Oracle Console metrics after 1 hour. You'll see stable horizontal lines at your targets.
 
-### Q: Can I switch back to the intelligent script?
-**A:** Yes! See [COMPARISON.md Migration Guide](COMPARISON.md#migration-between-modes)
-
-### Q: Does this use extra bandwidth?
-**A:** Minimal (~10-500 KB/s). Oracle gives 10TB/month free outbound. You'll use maybe 1-2GB/month.
+### Q: Can I enable network stress too?
+**A:** Yes! Add `ENABLE_NETWORK=true` and `TARGET_NETWORK_PERCENT=30` to `/etc/default/oracle-fixed-mode`, then restart the service.
 
 ---
 
 ## 🆘 Getting Help
 
-1. **Something not working?** Check [README-FIXED.md Troubleshooting](README-FIXED.md#-troubleshooting)
-2. **Questions?** Read [README-FIXED.md FAQ](README-FIXED.md#-faq)
+1. **Something not working?** Check [README.md Troubleshooting](README.md#-troubleshooting)
+2. **Questions?** Read [README.md FAQ](README.md#-faq)
 3. **Still stuck?** Open a GitHub issue with `[Fixed-Mode]` in the title
 
 ---

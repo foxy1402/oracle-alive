@@ -1,665 +1,295 @@
-# Oracle Cloud Keep-Alive
+# Fixed-Mode Keep-Alive for Oracle Cloud
 
-**Keep your free Oracle Cloud server running forever - prevents automatic deletion due to low usage.**
+## 🎯 Perfect for Single-CPU Instances
 
-Works on Oracle Linux and Ubuntu (both x86_64 and ARM instances).
+The **Fixed-Mode** script is designed for instances with limited resources (especially single-CPU systems) where you need **precise control** over utilization to prevent Oracle from reclaiming your instance due to inactivity.
 
----
+### Why Fixed-Mode?
 
-## 🎛️ Two Modes Available
-
-### 🤖 **Intelligent Mode** (Recommended - This README)
-- **Auto-adjusts** based on system activity
-- **Parallel stress** - all metrics run simultaneously
-- **Best for:** Multi-core instances, set-and-forget operation
-- **Install:** `sudo bash install.sh`
-
-### 🎯 **Fixed-Mode** ([See README-FIXED.md](README-FIXED.md))
-- **Manual targets** - you set exact percentages (e.g., CPU 25%, RAM 30%)
-- **No overshoot** - perfect for single-CPU instances
-- **Stable dashboard lines** - continuous monitoring, no sleep cycles
-- **Best for:** Single-CPU instances, precise control needed
-- **Install:** `sudo bash install-fixed.sh`
-
-> **Single-CPU users:** Use Fixed-Mode to prevent CPU hitting 100%. [Quick Start →](README-FIXED.md#-quick-start)  
-> **Not sure which to use?** [See detailed comparison →](COMPARISON.md)
+- ✅ **Manual target setting** - You set exact percentages (e.g., CPU 25%, RAM 30%)
+- ✅ **No overshoot** - Intelligent control prevents hitting 100% on single-CPU systems
+- ✅ **Stable dashboard lines** - No fluctuations, creates perfect horizontal lines in Oracle Console
+- ✅ **No sleep cycles** - Runs 24/7 with continuous 3-second monitoring loops
+- ✅ **Self-healing** - Automatically restarts any stress processes that die
+- ✅ **Oracle-safe** - Guaranteed to keep you above the 20% minimum threshold
 
 ---
 
-## ⚡ What's New in v2.2.1
+## 🚀 Quick Start
 
-**PARALLEL STRESS EDITION** - Fully optimized to match Oracle's monitoring methodology:
+### Installation (Ubuntu/Oracle Linux)
 
-- 🚀 **Parallel Execution**: CPU, memory, and network stress run simultaneously (not sequentially)
-- 📊 **High Duty Cycles**: 67% CPU, 94% memory/network (matches Oracle's 60s sampling)
-- 🎯 **Exact Methodology Match**: Measures only what Oracle monitors (USER CPU, app memory, interface traffic)
-- 🔄 **Dynamic Recalibration**: Auto-adjusts every 12 cycles (~20 minutes)
-- ⏱️ **Predictable Timing**: 96-second cycles (64s CPU + 90s memory/network overlap)
-- 🎮 **Gaming-Friendly**: Consistent patterns, no surprise spikes
-- 🛡️ **Baseline Protection**: Runs light 30% stress during baseline scans to prevent metric drops
-- 🔧 **v2.2.1 Fixes**: Critical bug fixes for memory cleanup, improved reliability
-
----
-
-## What Does This Do?
-
-Oracle deletes free-tier instances if CPU, memory, and network usage are **all below 20%** for 7 consecutive days.
-
-This script:
-- ✅ Monitors your actual usage (**exactly** what Oracle monitors - USER CPU, app memory, network traffic)
-- ✅ Runs all three stresses **in parallel** for maximum efficiency
-- ✅ Keeps **all 3 metrics above 40%** (double the requirement) with 94% duty cycles
-- ✅ Runs automatically 24/7 in the background
-- ✅ Won't interfere with your apps (lowest priority, nice level 19)
-- ✅ Self-optimizes every 20 minutes based on actual measurements
-
-**Result: Your instance will never be deleted.**
-
----
-
-## Installation
-
-### Step 1: Download
-
-**Oracle Linux:**
 ```bash
-sudo yum install git -y
+# 1. Clone repository
 git clone https://github.com/foxy1402/oracle-alive.git
 cd oracle-alive
+
+# 2. Install Fixed-Mode
+sudo bash install-fixed.sh
+
+# 3. (Optional) Customize targets
+sudo nano /etc/default/oracle-fixed-mode
+
+# 4. Restart to apply changes
+sudo systemctl restart oracle-fixed-mode
 ```
 
-**Ubuntu:**
-```bash
-sudo apt update && sudo apt install git -y
-git clone https://github.com/foxy1402/oracle-alive.git
-cd oracle-alive
-```
+### Set Your Targets
 
-### Step 2: Install
-
-```bash
-sudo bash install.sh
-```
-
-That's it! The script is now running.
-
-### Step 3: Verify
+Edit `/etc/default/oracle-fixed-mode`:
 
 ```bash
-sudo tail -f /var/log/oracle-keep-alive.log
+# Set your desired utilization (percentage)
+TARGET_CPU_PERCENT=25      # 25% CPU usage
+TARGET_MEMORY_PERCENT=30   # 30% RAM usage
 ```
 
-You should see:
-```
-[INFO] System detected: Ubuntu 22.04 (or Oracle Linux 8.x)
-[INFO] Target metrics (with 5% safety margin): CPU: 45%, Memory: 45%, Network: 45%
-[INFO] Starting parallel stress cycles...
-[INFO] CPU: 50% for 64s
-[INFO] Memory/Network: Hold for 90s (parallel with CPU)
-[INFO] Total cycle: ~96s (90s stress + 6s cleanup)
-[INFO] === Cycle #1 ===
-[INFO] Memory stress: Allocating XXXmb, holding for 90s (parallel)
-[INFO] Network stress: Continuous XXX KB/s for 90s (parallel)
-[INFO] CPU Cycle #1: 50% for 64s, sleep 0s (expect 33% avg)
-[INFO] ✓ All three metrics meeting targets - instance is SAFE
-```
+**Recommended targets for Oracle's 20% minimum:**
+- **Conservative:** CPU 25%, Memory 30% (25-50% above minimum)
+- **Moderate:** CPU 30%, Memory 35% (50-75% above minimum)
+- **Aggressive:** CPU 35%, Memory 40% (75-100% above minimum)
 
-Press `Ctrl+C` to exit.
+> Network stress is disabled by default. To activate it, add `ENABLE_NETWORK=true` and `TARGET_NETWORK_PERCENT=30` to `/etc/default/oracle-fixed-mode`.
 
 ---
 
-## Supported Systems
+## 📊 How It Works
 
-| Operating System | x86_64 | ARM (aarch64) |
-|------------------|--------|---------------|
-| Oracle Linux 8/9 | ✅ | ✅ |
-| Ubuntu 20.04 LTS | ✅ | ✅ |
-| Ubuntu 22.04 LTS | ✅ | ✅ |
-| Ubuntu Minimal   | ✅ | ✅ |
+### Continuous Monitoring Loop
 
----
+```
+Every 3 seconds:
+1. Measure current CPU and Memory usage
+2. Compare to your targets
+3. Adjust stress up or down (±5% CPU, ±100MB RAM)
+4. Self-heal: check if stress processes are alive
+5. Repeat
+```
 
-## Common Commands
+### Intelligent Control System
 
-```bash
-# Check status
-sudo systemctl status oracle-keep-alive
+- **Proportional adjustment:** Small changes prevent wild swings
+- **Tolerance zones:** ±2-3% to avoid constant micro-adjustments
+- **Safety caps:** CPU max 95%, Memory max 90% to prevent system lockup
+- **Priority:** All stress runs at nice level 19 (lowest priority)
 
-# View logs
-sudo tail -f /var/log/oracle-keep-alive.log
+### Example Timeline (Target: 25% CPU)
 
-# Stop/start
-sudo systemctl stop oracle-keep-alive
-sudo systemctl start oracle-keep-alive
-
-# Restart (after config changes)
-sudo systemctl restart oracle-keep-alive
-
-# Uninstall
-sudo bash install.sh --uninstall
+```
+00:00 - Start: CPU at 10% → Increase stress to 20%
+00:03 - Check: CPU at 15% → Increase stress to 25%
+00:06 - Check: CPU at 23% → Within tolerance, no change
+00:09 - Check: CPU at 26% → Within tolerance, no change
+00:12 - Check: CPU at 28% → Decrease stress to 23%
+... continues 24/7 ...
 ```
 
 ---
 
-## Configuration Guide
+## 📈 Verify in Oracle Console
 
-### Quick Start (Default Settings)
+1. **Navigate to:** Oracle Cloud Console → Compute → Instances → [Your Instance] → Metrics
+2. **Wait:** 60 minutes for initial data
+3. **Expect:** Two stable horizontal lines at your target percentages
 
-**Default settings work for 99% of users** - targets 40% on all metrics (double Oracle's 20% minimum).
-
-No configuration needed - just install and forget!
-
----
-
-### How to Modify Configuration
-
-If you need to customize settings (lower targets, adjust timing, disable metrics):
-
-#### Step 1: Edit the configuration file
-
-```bash
-sudo nano /etc/default/oracle-keep-alive
+### Perfect Dashboard Example:
 ```
-
-#### Step 2: Make your changes
-
-See [Common Configuration Scenarios](#common-configuration-scenarios) below for examples.
-
-#### Step 3: Apply changes
-
-**IMPORTANT:** After editing, you MUST reload systemd and restart the service:
-
-```bash
-# Reload systemd daemon (required to load new environment variables)
-sudo systemctl daemon-reload
-
-# Restart the service
-sudo systemctl restart oracle-keep-alive
-```
-
-**Why daemon-reload is required:** The service uses `EnvironmentFile` to load your config. Without `daemon-reload`, systemd won't pick up the changes.
-
-#### Step 4: Verify changes took effect
-
-```bash
-# Check that environment variables loaded (should show your values)
-sudo systemctl show oracle-keep-alive | grep TARGET_
-
-# Check logs to confirm new targets
-sudo tail -50 /var/log/oracle-keep-alive.log | grep "target"
-```
-
-You should see output like:
-```
-TARGET_CPU_PERCENT=35         # Your custom value
-[INFO]   • CPU: 35% + 5% = 40%
+CPU Usage (%)      ████████████████────────────── 25% (stable line)
+Memory Usage (%)   ████████████████████──────── 30% (stable line)
 ```
 
 ---
 
-### Common Configuration Scenarios
+## 🛠️ Service Management
 
-#### Scenario 1: Lower CPU Target (e.g., for gaming VPN)
-
-**Goal:** Reduce CPU usage to 30% to minimize interference with gaming.
-
-Edit `/etc/default/oracle-keep-alive`:
+### Check Status
 ```bash
-TARGET_CPU_PERCENT=30          # Changed from 40
-TARGET_MEMORY_PERCENT=40       # Keep default
-TARGET_NETWORK_PERCENT=40      # Keep default
-SAFETY_MARGIN=5                # Keep default
-
-# Optional: Further reduce CPU intensity
-CPU_STRESS_PERCENT=40          # Changed from 50
+sudo systemctl status oracle-fixed-mode
 ```
 
-Apply changes:
+### View Live Logs
 ```bash
-sudo systemctl daemon-reload
-sudo systemctl restart oracle-keep-alive
+sudo tail -f /var/log/oracle-fixed-mode.log
 ```
 
-**Result:** CPU target becomes 30% + 5% = **35% total**
-
----
-
-#### Scenario 2: Lower ALL targets (minimal Oracle protection)
-
-**Goal:** Use absolute minimum to stay above Oracle's 20% threshold.
-
-Edit `/etc/default/oracle-keep-alive`:
+### Stop/Start/Restart
 ```bash
-TARGET_CPU_PERCENT=25          # Just above Oracle minimum
-TARGET_MEMORY_PERCENT=25       # Just above Oracle minimum  
-TARGET_NETWORK_PERCENT=25      # Just above Oracle minimum
-SAFETY_MARGIN=5                # Keep 5% buffer
-
-# Reduce stress intensity
-CPU_STRESS_PERCENT=40
-NETWORK_BANDWIDTH_LIMIT_KBS=200
+sudo systemctl stop oracle-fixed-mode
+sudo systemctl start oracle-fixed-mode
+sudo systemctl restart oracle-fixed-mode
 ```
 
-Apply changes:
+### Change Targets
 ```bash
-sudo systemctl daemon-reload
-sudo systemctl restart oracle-keep-alive
-```
+# 1. Edit config
+sudo nano /etc/default/oracle-fixed-mode
 
-**Result:** All metrics target 30% (25% + 5%)
+# 2. Change TARGET_CPU_PERCENT, TARGET_MEMORY_PERCENT, etc.
 
----
+# 3. Save (Ctrl+O, Enter, Ctrl+X)
 
-#### Scenario 3: Disable Memory Stress (x86 instances only)
+# 4. Restart service
+sudo systemctl restart oracle-fixed-mode
 
-**Goal:** Oracle doesn't monitor memory on x86 instances, so save resources.
-
-Edit `/etc/default/oracle-keep-alive`:
-```bash
-STRESS_MEMORY=0                # Disable memory stress
-TARGET_CPU_PERCENT=40          # Keep defaults
-TARGET_NETWORK_PERCENT=40
-```
-
-Apply changes:
-```bash
-sudo systemctl daemon-reload
-sudo systemctl restart oracle-keep-alive
-```
-
-**Note:** Only do this on **x86** instances. ARM instances MUST keep memory enabled!
-
----
-
-#### Scenario 4: Increase Network Bandwidth
-
-**Goal:** Ensure network reaches target with higher traffic.
-
-Edit `/etc/default/oracle-keep-alive`:
-```bash
-NETWORK_BANDWIDTH_LIMIT_KBS=1000   # Increased from 500
-NETWORK_STRESS_MODE="smart"        # Keep smart mode
-```
-
-Apply changes:
-```bash
-sudo systemctl daemon-reload
-sudo systemctl restart oracle-keep-alive
+# 5. Watch logs to confirm
+sudo tail -f /var/log/oracle-fixed-mode.log
 ```
 
 ---
 
-#### Scenario 5: Adjust Recalibration Frequency
+## 🔧 Advanced Configuration
 
-**Goal:** Recalibrate more often to adapt to changing workloads.
+### Control Loop Tuning
 
-Edit `/etc/default/oracle-keep-alive`:
 ```bash
-CPU_RECALIBRATION_CYCLES=6     # Every 6 cycles (~10 min) instead of 12 (~20 min)
-MONITORING_INTERVAL=180        # Memory/network check every 3 min instead of 5 min
+# /etc/default/oracle-fixed-mode
+
+# How often to check and adjust (seconds)
+CONTROL_INTERVAL=3           # Default: 3s (fast response)
+                             # Increase to 5s if you see high overhead
 ```
 
-Apply changes:
+### Logging
+
 ```bash
-sudo systemctl daemon-reload
-sudo systemctl restart oracle-keep-alive
+# Log verbosity
+LOG_LEVEL=INFO               # DEBUG, INFO, WARN, ERROR
+
+# Status report frequency
+STATS_INTERVAL=60            # Log stats every 60 seconds
 ```
+
+### Enable Network Stress (optional)
+
+Network stress is off by default. To activate it:
+
+```bash
+# /etc/default/oracle-fixed-mode
+ENABLE_NETWORK=true
+TARGET_NETWORK_PERCENT=30
+```
+
+Then restart: `sudo systemctl restart oracle-fixed-mode`
 
 ---
 
-### Key Configuration Options
+## 🐛 Troubleshooting
 
-#### Target Metrics
-```bash
-TARGET_CPU_PERCENT=40          # CPU target (default: 40%)
-TARGET_MEMORY_PERCENT=40       # Memory target (default: 40%)
-TARGET_NETWORK_PERCENT=40      # Network target (default: 40%)
-SAFETY_MARGIN=5                # Added to each target (default: 5%)
-```
-**Actual target = TARGET + SAFETY_MARGIN** (e.g., 40% + 5% = 45%)
+### CPU Not Reaching Target
 
-#### CPU Stress Timing (Parallel v2.2)
-```bash
-CPU_STRESS_PERCENT=50          # Initial CPU intensity (auto-adjusts to ~68%)
-CPU_STRESS_DURATION=64         # Stress phase duration (seconds)
-CPU_SLEEP_DURATION=0           # Sleep after CPU (0 = overlap with mem/net)
-CPU_RECALIBRATION_CYCLES=12    # Recalibrate every N cycles (~20 min)
-CPU_STRESS_FLOOR=40            # Minimum intensity (prevents drift)
-```
+**Problem:** CPU stays at 15% but target is 25%
 
-#### Memory/Network Parallel Duration
-```bash
-MEMORY_NETWORK_DURATION=90     # How long to hold memory and run network (seconds)
-MEMORY_STRESS_MB=500           # Maximum memory to allocate (MB)
-```
+**Solutions:**
+1. Check if stress-ng is installed: `sudo apt install stress-ng -y` (Ubuntu) or `sudo yum install stress-ng -y` (Oracle Linux)
+2. Raise the target slightly: `TARGET_CPU_PERCENT=30` in `/etc/default/oracle-fixed-mode`
+3. Check logs: `sudo tail -50 /var/log/oracle-fixed-mode.log`
 
-#### Network Settings
-```bash
-STRESS_NETWORK=1               # Enable/disable (1=on, 0=off)
-NETWORK_BANDWIDTH_LIMIT_KBS=500    # Max bandwidth (KB/s)
-NETWORK_STRESS_MODE="smart"    # Mode: "smart" or "aggressive"
-NETWORK_USE_TRAFFIC_SHAPING=1  # Prioritize gaming traffic (requires iproute2)
-```
+### CPU Overshooting (Single-CPU)
 
-#### Enable/Disable Metrics
-```bash
-STRESS_CPU=1                   # Enable CPU stress (1=on, 0=off)
-STRESS_MEMORY=1                # Enable memory stress (1=on, 0=off)
-STRESS_NETWORK=1               # Enable network stress (1=on, 0=off)
-```
+**Problem:** CPU hits 100% when target is 25%
 
-#### Logging
-```bash
-LOG_LEVEL=INFO                 # DEBUG, INFO, WARN, ERROR
-LOG_FILE=/var/log/oracle-keep-alive.log
-```
+**Solutions:**
+1. Script automatically caps at 95% — this should prevent lockup
+2. Lower the target: `TARGET_CPU_PERCENT=20` in `/etc/default/oracle-fixed-mode`
+3. Check logs: `sudo tail -50 /var/log/oracle-fixed-mode.log`
+
+### Memory Not Holding
+
+**Problem:** Memory drops below target
+
+**Solutions:**
+1. Check /dev/shm has space: `df -h /dev/shm`
+2. Raise the target slightly: `TARGET_MEMORY_PERCENT=35`
+3. Check for OOM killer: `dmesg | grep -i oom`
+
+### Service Keeps Restarting
+
+**Problem:** `systemctl status` shows frequent restarts
+
+**Solutions:**
+1. Check for errors: `sudo journalctl -u oracle-fixed-mode -n 100`
+2. Verify dependencies: `bash install-fixed.sh` (re-run installer)
+3. Check resource limits: `systemctl show oracle-fixed-mode | grep -i limit`
 
 ---
 
-### Important Notes
+## 🔐 Security Notes
 
-1. **Always run `daemon-reload` after config changes**
-   ```bash
-   sudo systemctl daemon-reload
-   sudo systemctl restart oracle-keep-alive
-   ```
-
-2. **Verify changes took effect** - Check logs for new targets:
-   ```bash
-   sudo tail -50 /var/log/oracle-keep-alive.log | grep "CPU:"
-   ```
-
-3. **Don't set targets below 20%** - Oracle will delete your instance!
-
-4. **ARM instances need memory stress** - Don't disable `STRESS_MEMORY` on ARM
-
-5. **Wait 1 hour** - Oracle Cloud Console metrics update with a delay
+- **Runs as root:** Required for memory allocation and network operations
+- **Low priority:** All stress runs at nice 19 (won't interfere with user apps)
+- **Resource limits:** systemd limits prevent runaway processes
+- **Read-only system:** ProtectSystem=strict in service file
 
 ---
 
-### Troubleshooting Configuration
-
-#### Problem: Changes not taking effect
-
-**Symptom:** You changed `TARGET_CPU_PERCENT=35` but logs still show `target: 40%`
-
-**Solution:**
-```bash
-# Did you run daemon-reload? This is required!
-sudo systemctl daemon-reload
-sudo systemctl restart oracle-keep-alive
-
-# Verify environment loaded
-sudo systemctl show oracle-keep-alive | grep TARGET_CPU
-# Should show: TARGET_CPU_PERCENT=35
-
-# Check logs
-sudo tail -20 /var/log/oracle-keep-alive.log | grep "CPU:"
-# Should show: [INFO]   • CPU: 35% + 5% = 40%
-```
-
-If environment is empty, the service file may have a bug. Update to latest version:
-```bash
-cd oracle-alive
-git pull
-sudo bash install.sh
-```
-
-#### Problem: Service won't start after config change
-
-**Symptom:** `sudo systemctl status oracle-keep-alive` shows failed
-
-**Solution:**
-```bash
-# Check for syntax errors in config
-sudo nano /etc/default/oracle-keep-alive
-
-# Ensure no syntax errors:
-# - No spaces around = (use KEY=VALUE, not KEY = VALUE)
-# - No quotes unless needed (use 40, not "40" for numbers)
-# - No export prefix (use KEY=VALUE, not export KEY=VALUE)
-
-# Check logs for errors
-sudo journalctl -u oracle-keep-alive -n 50
-
-# Restore defaults if needed
-sudo cp /opt/oracle-keep-alive/../config.env /etc/default/oracle-keep-alive
-sudo systemctl restart oracle-keep-alive
-```
-
----
-
-### Default Configuration File Location
-
-- **Config:** `/etc/default/oracle-keep-alive`
-- **Script:** `/opt/oracle-keep-alive/keep-alive.sh`
-- **Service:** `/etc/systemd/system/oracle-keep-alive.service`
-- **Logs:** `/var/log/oracle-keep-alive.log`
-
----
-
-## How It Works (v2.2 - Parallel Stress Edition)
-
-### Oracle's Policy
-
-Oracle monitors 3 metrics using **periodic sampling** (approximately every 60 seconds):
-1. **CPU** - USER + NICE time only (NOT system/kernel/irq)
-2. **Memory** - Application memory only (NOT buffers/cache)  
-3. **Network** - Total interface traffic
-
-If **ALL THREE** stay below 20% for 7 days → instance deleted.
-
-### Our Optimized Strategy
-
-**96-Second Parallel Cycle:**
-
-```
-t=0s:   START all three simultaneously
-        ├─ CPU stress:     64s at 50-68% (user-space only)
-        ├─ Memory:         Allocate and HOLD for 90s
-        └─ Network:        Continuous traffic for 90s
-
-t=64s:  CPU completes (memory/network continue for 26s)
-t=90s:  Memory released, network stopped
-t=96s:  Next cycle begins
-```
-
-**Why This Works Perfectly:**
-
-1. **Parallel Execution** - All metrics elevated simultaneously
-2. **High Duty Cycles** - CPU: 67%, Memory/Network: 94%
-3. **Oracle's Samples** - Every 60s sample catches elevated metrics
-4. **Exact Matching** - Measures only what Oracle monitors:
-   - CPU: USER + NICE (excludes system/kernel)
-   - Memory: Application memory (excludes buffers/cache)
-   - Network: Total interface traffic
-5. **Dynamic Recalibration** - Adjusts CPU intensity every ~20 minutes
-6. **Lowest Priority** - Nice level 19, won't slow your apps
-
-**Result: 40%+ average on all metrics = Double Oracle's requirement = Safe forever**
-
----
-
-## Verification
-
-### Check Logs (Immediate)
-
-```bash
-sudo tail -100 /var/log/oracle-keep-alive.log
-```
-
-Look for:
-- ✅ "Starting parallel stress cycles..."
-- ✅ "CPU: 50% for 64s"
-- ✅ "Memory/Network: Hold for 90s (parallel with CPU)"
-- ✅ CPU Cycle messages with intensity and expected average
-- ✅ After cycle 12: "CPU Recalibration" with new intensity
-- ✅ "All three metrics meeting targets - instance is SAFE"
-
-### Check Oracle Cloud Console (After 1 Hour)
-
-1. Login to [Oracle Cloud Console](https://cloud.oracle.com)
-2. Go to: **Compute** → **Instances** → **Your Instance** → **Metrics**
-3. Verify all 3 graphs show activity:
-   - **CPU**: ~40-45% average with 96-second cycle pattern
-   - **Memory**: ~42% average, held continuously (94% duty cycle)
-   - **Network**: Sustained activity throughout (94% duty cycle)
-
----
-
-## Troubleshooting
-
-### Problem: Metrics still below 40%
-
-**Check logs:**
-```bash
-sudo tail -100 /var/log/oracle-keep-alive.log
-```
-
-**Ensure all stress types enabled:**
-```bash
-sudo nano /etc/default/oracle-keep-alive
-```
-
-Verify these are set to `1`:
-```bash
-STRESS_CPU=1
-STRESS_MEMORY=1
-STRESS_NETWORK=1
-```
-
-**Restart:**
-```bash
-sudo systemctl restart oracle-keep-alive
-```
-
-### Problem: Service won't start
-
-```bash
-# Check for errors
-sudo journalctl -u oracle-keep-alive -n 50
-
-# Verify files exist
-ls -la /opt/oracle-keep-alive/keep-alive.sh
-ls -la /etc/systemd/system/oracle-keep-alive.service
-
-# Reinstall
-cd oracle-alive
-sudo bash install.sh
-```
-
-### Problem: Baseline shows 0% for CPU or Network
-
-This was a bug in older versions. Update to latest:
-```bash
-cd oracle-alive
-git pull
-sudo systemctl stop oracle-keep-alive
-sudo bash install.sh
-sudo systemctl start oracle-keep-alive
-```
-
----
-
-## FAQ
-
-**Q: Will this use my free tier limits?**  
-A: No. It only uses CPU/RAM/Network on your existing instance. No additional resources consumed.
-
-**Q: Will it slow down my applications?**  
-A: No. Runs at lowest priority (nice level 19). Your apps always get resources first.
-
-**Q: How long until it protects my instance?**  
-A: Immediately. Oracle's metrics update within 1 hour.
-
-**Q: Do I need to do anything after installation?**  
-A: No. It runs automatically 24/7. Check logs occasionally to confirm it's working.
-
-**Q: What if I already got a warning from Oracle?**  
-A: Install immediately. The script will raise your metrics within 1 hour.
-
-**Q: Can I use this with other software (VPN, web server, etc.)?**  
-A: Yes. It works alongside anything. Won't interfere.
-
-**Q: Is this against Oracle's terms of service?**  
-A: No. The script creates normal system activity. Oracle only prohibits resource mining/abuse.
-
----
-
-## Uninstall
+## 🗑️ Uninstall
 
 ```bash
 cd oracle-alive
-sudo bash install.sh --uninstall
+sudo bash install-fixed.sh --uninstall
+
+# Optional: Remove logs
+sudo rm /var/log/oracle-fixed-mode.log*
+
+# Optional: Remove config
+sudo rm /etc/default/oracle-fixed-mode
 ```
 
-This removes:
-- Service files
-- Installation directory
-- (Keeps logs and config for reference)
+---
+
+## 📝 FAQ
+
+### Q: How often does Oracle check my metrics?
+**A:** Oracle samples every 60 seconds and calculates rolling averages over 7 days.
+
+### Q: What if I need different targets per metric?
+**A:** Yes! Set different values for `TARGET_CPU_PERCENT` and `TARGET_MEMORY_PERCENT`. To add network stress, also set `ENABLE_NETWORK=true` and `TARGET_NETWORK_PERCENT`.
+
+### Q: Will this work on ARM instances?
+**A:** Yes! Tested on both x86_64 and aarch64 (ARM).
+
+### Q: Does this impact my VPN/gaming?
+**A:** Minimal. All stress runs at lowest priority (nice 19). Your apps get CPU first.
+
+### Q: Can I set targets below 20%?
+**A:** Technically yes, but NOT recommended. Oracle reclaims if < 20%. Stay at 25% minimum for safety.
 
 ---
 
-## Technical Details
+## 📚 Related Files
 
-### Parallel Architecture (v2.2)
-
-**Cycle Structure (96 seconds):**
-- **t=0-64s**: CPU stress at 50-68% (user-space processes only)
-- **t=0-90s**: Memory allocated and held (application memory)
-- **t=0-90s**: Network continuous traffic (rate-limited bandwidth)
-- **t=90-96s**: Cleanup and prep for next cycle
-
-**Measurements (matches Oracle's methodology exactly):**
-- **CPU**: Delta-based measurement of `user + nice` time from `/proc/stat`
-  - ✓ Counts: User-space application CPU
-  - ✗ Excludes: system, kernel, irq, softirq, steal, iowait
-- **Memory**: Actual application memory (total - available) from `free`
-  - ✓ Counts: Application-allocated memory
-  - ✗ Excludes: Buffers, cache, kernel memory
-- **Network**: Interface traffic from `/sys/class/net/` statistics
-  - ✓ Counts: Total TX+RX bytes on primary interface
-
-**Stress Methods:**
-- **CPU**: Parallel worker processes at nice level 19 (lowest priority)
-- **Memory**: Allocation in `/dev/shm`, held for 90s (94% duty cycle)
-- **Network**: Continuous distributed pings + HTTP requests + rate-limited downloads
-
-**Intelligent Operation:**
-- Runs all three stresses **in parallel** for maximum efficiency
-- CPU auto-recalibrates every 12 cycles (~20 minutes)
-- Memory/network adjust every 5 minutes based on baseline
-- High duty cycles ensure Oracle's 60s samples always catch activity
-- Automatically detects network interface
-- Portable across Oracle Linux and Ubuntu (pure POSIX bash)
+- **Script:** `/opt/oracle-keep-alive/fixedmode.sh`
+- **Service:** `/etc/systemd/system/oracle-fixed-mode.service`
+- **Config:** `/etc/default/oracle-fixed-mode`
+- **Logs:** `/var/log/oracle-fixed-mode.log`
 
 ---
 
-## Support
+## 💡 Tips for Success
 
-**Check logs first:**
-```bash
-sudo tail -200 /var/log/oracle-keep-alive.log
-```
-
-**Still have issues?** Open a GitHub issue with:
-- Your OS version (`cat /etc/os-release`)
-- Architecture (`uname -m`)
-- Recent logs (last 50 lines)
+1. **Start conservative:** Begin with CPU 25%, Memory 30%
+2. **Monitor for 24 hours:** Check Oracle Console metrics the next day
+3. **Adjust gradually:** Change targets by 5% at a time
+4. **Check weekly:** First month, verify metrics weekly in Oracle Console
+5. **Set alerts:** (Optional) Use Oracle's built-in metric alerts for < 20%
 
 ---
 
-## License
+## 🎉 Success Criteria
 
-MIT License - Free to use, modify, and share.
-
-## Credits
-
-Created to help the community keep their free Oracle Cloud instances alive.
-
-**If this saved your instance, please ⭐ star this repo!**
+You've configured it correctly when:
+- ✅ Oracle Console shows stable CPU and Memory lines at your targets
+- ✅ Both metrics stay above targets ±5% consistently
+- ✅ Service runs 24/7 without restarts
+- ✅ Your applications still perform normally
 
 ---
 
-**Version:** 2.2.1 (Parallel Stress Edition)  
-**Compatibility:** Oracle Linux 8/9, Ubuntu 20.04/22.04, Ubuntu Minimal (x86_64 and ARM)
+## 📖 Additional Resources
+
+- **GitHub Issues:** Report bugs or request features
+- **Oracle Docs:** [Compute Instance Lifecycle](https://docs.oracle.com/en-us/iaas/Content/Compute/Tasks/managinginstances.htm)
+
+---
+
+**Need help?** Open an issue on GitHub.

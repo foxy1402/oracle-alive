@@ -22,38 +22,24 @@ VERSION="1.0.0"
 # CONFIGURATION - SET YOUR TARGETS HERE
 # ============================================================================
 
-# Target utilization levels (percentage) - CUSTOMIZE THESE
-# Oracle's minimum is 20%, recommend at least 25-30% for safety
+# CPU and RAM targets (percentage) — the only metrics users need to configure
+# Oracle's minimum threshold is 20%; 25-30% gives a safe margin
 TARGET_CPU_PERCENT="${TARGET_CPU_PERCENT:-25}"
 TARGET_MEMORY_PERCENT="${TARGET_MEMORY_PERCENT:-30}"
-TARGET_NETWORK_PERCENT="${TARGET_NETWORK_PERCENT:-30}"
 
-# Control loop interval (seconds) - how often to check and adjust
-# Lower = more responsive but more overhead. 2-5s recommended.
+# Control loop interval (seconds) — how often to check and adjust
 CONTROL_INTERVAL="${CONTROL_INTERVAL:-3}"
 
-# Adjustment sensitivity (percentage points per cycle)
-# How much to increase/decrease stress each cycle
-CPU_ADJUSTMENT_STEP="${CPU_ADJUSTMENT_STEP:-5}"
-MEMORY_ADJUSTMENT_MB="${MEMORY_ADJUSTMENT_MB:-100}"
-NETWORK_ADJUSTMENT_KBS="${NETWORK_ADJUSTMENT_KBS:-50}"
-
-# Tolerance (percentage points) - acceptable deviation from target
-# If within tolerance, don't adjust (prevents thrashing)
-CPU_TOLERANCE="${CPU_TOLERANCE:-2}"
-MEMORY_TOLERANCE="${MEMORY_TOLERANCE:-2}"
-NETWORK_TOLERANCE="${NETWORK_TOLERANCE:-3}"
-
-# Network configuration
-NETWORK_BANDWIDTH_LIMIT_KBS="${NETWORK_BANDWIDTH_LIMIT_KBS:-500}"
-NETWORK_TARGETS="${NETWORK_TARGETS:-8.8.8.8 8.8.4.4 1.1.1.1 1.0.0.1}"
+# Network stress — disabled by default; set ENABLE_NETWORK=true in config to activate
+ENABLE_NETWORK="${ENABLE_NETWORK:-false}"
+TARGET_NETWORK_PERCENT="${TARGET_NETWORK_PERCENT:-30}"
 
 # Logging
 LOG_FILE="${LOG_FILE:-/var/log/oracle-fixed-mode.log}"
 LOG_LEVEL="${LOG_LEVEL:-INFO}"
-STATS_INTERVAL="${STATS_INTERVAL:-60}"  # Log stats every N seconds
+STATS_INTERVAL="${STATS_INTERVAL:-60}"
 
-# Process priority (nice level and IO class)
+# Process priority
 PROCESS_NICE_LEVEL="${PROCESS_NICE_LEVEL:-19}"
 IO_SCHEDULING_CLASS="${IO_SCHEDULING_CLASS:-idle}"
 
@@ -158,18 +144,21 @@ detect_system() {
     log_info "  • OS: ${os_name}"
     log_info "  • CPU cores: ${CPU_COUNT}"
     log_info "  • Total RAM: ${TOTAL_MEMORY_MB}MB"
-    log_info "  • Network interface: ${PRIMARY_INTERFACE}"
+    if [[ "$ENABLE_NETWORK" == "true" ]]; then
+        log_info "  • Network interface: ${PRIMARY_INTERFACE}"
+    fi
     log_info ""
     log_info "Target Utilization:"
     log_info "  • CPU: ${TARGET_CPU_PERCENT}%"
     log_info "  • Memory: ${TARGET_MEMORY_PERCENT}%"
-    log_info "  • Network: ${TARGET_NETWORK_PERCENT}%"
+    if [[ "$ENABLE_NETWORK" == "true" ]]; then
+        log_info "  • Network: ${TARGET_NETWORK_PERCENT}%"
+    else
+        log_info "  • Network: disabled"
+    fi
     log_info ""
     log_info "Control Parameters:"
     log_info "  • Check interval: ${CONTROL_INTERVAL}s"
-    log_info "  • CPU tolerance: ±${CPU_TOLERANCE}%"
-    log_info "  • Memory tolerance: ±${MEMORY_TOLERANCE}%"
-    log_info "  • Network tolerance: ±${NETWORK_TOLERANCE}%"
     log_info "================================"
 }
 
@@ -661,14 +650,23 @@ log_statistics() {
     now=$(date +%s)
     
     if [[ $((now - STATS_LAST_LOG)) -ge $STATS_INTERVAL ]]; then
-        local cpu=$(get_cpu_usage)
-        local mem=$(get_memory_usage_percent)
-        local net=$(get_network_usage_kbs)
+        local cpu
+        local mem
+        cpu=$(get_cpu_usage)
+        mem=$(get_memory_usage_percent)
         
         log_info "--- Status Report ---"
-        log_info "Current: CPU=${cpu}% (target=${TARGET_CPU_PERCENT}%), Memory=${mem}% (target=${TARGET_MEMORY_PERCENT}%), Network=${net}KB/s"
-        log_info "Active stress: CPU=${CURRENT_CPU_LOAD}%, Memory=${CURRENT_MEMORY_MB}MB, Network=${CURRENT_NETWORK_KBS}KB/s"
-        log_info "Total adjustments: ${TOTAL_ADJUSTMENTS} (CPU=${CPU_ADJUSTMENTS}, Mem=${MEMORY_ADJUSTMENTS}, Net=${NETWORK_ADJUSTMENTS})"
+        if [[ "$ENABLE_NETWORK" == "true" ]]; then
+            local net
+            net=$(get_network_usage_kbs)
+            log_info "Current: CPU=${cpu}% (target=${TARGET_CPU_PERCENT}%), Memory=${mem}% (target=${TARGET_MEMORY_PERCENT}%), Network=${net}KB/s"
+            log_info "Active stress: CPU=${CURRENT_CPU_LOAD}%, Memory=${CURRENT_MEMORY_MB}MB, Network=${CURRENT_NETWORK_KBS}KB/s"
+            log_info "Total adjustments: ${TOTAL_ADJUSTMENTS} (CPU=${CPU_ADJUSTMENTS}, Mem=${MEMORY_ADJUSTMENTS}, Net=${NETWORK_ADJUSTMENTS})"
+        else
+            log_info "Current: CPU=${cpu}% (target=${TARGET_CPU_PERCENT}%), Memory=${mem}% (target=${TARGET_MEMORY_PERCENT}%)"
+            log_info "Active stress: CPU=${CURRENT_CPU_LOAD}%, Memory=${CURRENT_MEMORY_MB}MB"
+            log_info "Total adjustments: ${TOTAL_ADJUSTMENTS} (CPU=${CPU_ADJUSTMENTS}, Mem=${MEMORY_ADJUSTMENTS})"
+        fi
         log_info "--------------------"
         
         STATS_LAST_LOG=$now
@@ -700,17 +698,21 @@ main() {
     # Initialize stress levels to match targets
     CURRENT_CPU_LOAD=$TARGET_CPU_PERCENT
     CURRENT_MEMORY_MB=$((TOTAL_MEMORY_MB * TARGET_MEMORY_PERCENT / 100))
-    local target_net_mb=$((TOTAL_MEMORY_MB * TARGET_NETWORK_PERCENT / 100))
-    CURRENT_NETWORK_KBS=$((target_net_mb * 10))
     
-    if [[ $CURRENT_NETWORK_KBS -gt $NETWORK_BANDWIDTH_LIMIT_KBS ]]; then
-        CURRENT_NETWORK_KBS=$NETWORK_BANDWIDTH_LIMIT_KBS
+    if [[ "$ENABLE_NETWORK" == "true" ]]; then
+        local target_net_mb=$((TOTAL_MEMORY_MB * TARGET_NETWORK_PERCENT / 100))
+        CURRENT_NETWORK_KBS=$((target_net_mb * 10))
+        if [[ $CURRENT_NETWORK_KBS -gt $NETWORK_BANDWIDTH_LIMIT_KBS ]]; then
+            CURRENT_NETWORK_KBS=$NETWORK_BANDWIDTH_LIMIT_KBS
+        fi
     fi
     
     log_info "Starting initial stress processes..."
     start_cpu_stress
     start_memory_stress
-    start_network_stress
+    if [[ "$ENABLE_NETWORK" == "true" ]]; then
+        start_network_stress
+    fi
     
     log_info "Entering continuous monitoring mode (${CONTROL_INTERVAL}s interval)"
     log_info "This will run 24/7 until stopped. Press Ctrl+C to exit."
@@ -718,15 +720,21 @@ main() {
     STATS_LAST_LOG=$(date +%s)
     
     while true; do
-        # Measure current metrics
-        local cpu=$(get_cpu_usage)
-        local mem=$(get_memory_usage_percent)
-        local net=$(get_network_usage_kbs)
+        # Measure current metrics (get_cpu_usage always takes ~1s)
+        local cpu
+        local mem
+        cpu=$(get_cpu_usage)
+        mem=$(get_memory_usage_percent)
         
         # Adjust stress based on measurements
         adjust_cpu_stress $cpu
         adjust_memory_stress $mem
-        adjust_network_stress $net
+        
+        if [[ "$ENABLE_NETWORK" == "true" ]]; then
+            local net
+            net=$(get_network_usage_kbs)  # takes ~1s
+            adjust_network_stress $net
+        fi
         
         # Self-healing check
         check_and_heal
@@ -734,9 +742,11 @@ main() {
         # Log statistics periodically
         log_statistics
         
-        # Wait before next cycle (minus time already spent in measurements)
-        # get_cpu_usage takes ~1s, get_network_usage_kbs takes ~1s
-        local remaining=$((CONTROL_INTERVAL - 2))
+        # Wait for the remainder of the control interval
+        # get_cpu_usage ~1s; get_network_usage_kbs adds another ~1s when enabled
+        local measurement_secs=1
+        [[ "$ENABLE_NETWORK" == "true" ]] && measurement_secs=2
+        local remaining=$((CONTROL_INTERVAL - measurement_secs))
         if [[ $remaining -gt 0 ]]; then
             sleep $remaining
         fi
@@ -760,5 +770,24 @@ if [[ -f /etc/default/oracle-fixed-mode ]]; then
     source /etc/default/oracle-fixed-mode
     log_info "Loaded configuration from /etc/default/oracle-fixed-mode"
 fi
+
+# Warn if the config file sets TARGET_NETWORK_PERCENT but ENABLE_NETWORK is not true
+# (catches users upgrading from an older config that had network targets configured)
+if [[ "$ENABLE_NETWORK" != "true" ]] && \
+   [[ -f /etc/default/oracle-fixed-mode ]] && \
+   grep -q "^TARGET_NETWORK_PERCENT=" /etc/default/oracle-fixed-mode 2>/dev/null; then
+    log_warn "TARGET_NETWORK_PERCENT is set in config but ENABLE_NETWORK is not 'true' — network stress is disabled"
+    log_warn "Add ENABLE_NETWORK=true to /etc/default/oracle-fixed-mode to activate network stress"
+fi
+
+# Internal control parameters — set after config load so they cannot be overridden
+CPU_ADJUSTMENT_STEP=5
+MEMORY_ADJUSTMENT_MB=100
+NETWORK_ADJUSTMENT_KBS=50
+CPU_TOLERANCE=2
+MEMORY_TOLERANCE=2
+NETWORK_TOLERANCE=3
+NETWORK_BANDWIDTH_LIMIT_KBS=500
+NETWORK_TARGETS="8.8.8.8 8.8.4.4 1.1.1.1 1.0.0.1"
 
 main

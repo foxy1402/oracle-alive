@@ -88,8 +88,6 @@ check_system() {
     local missing_packages=()
     
     declare -A pkg_map_apt=(
-        ["curl"]="curl"
-        ["ping"]="iputils-ping"
         ["free"]="procps"
         ["awk"]="gawk"
         ["ip"]="iproute2"
@@ -98,8 +96,6 @@ check_system() {
     )
     
     declare -A pkg_map_yum=(
-        ["curl"]="curl"
-        ["ping"]="iputils"
         ["free"]="procps-ng"
         ["awk"]="gawk"
         ["ip"]="iproute"
@@ -107,7 +103,7 @@ check_system() {
         ["dd"]="coreutils"
     )
     
-    for cmd in bash curl ping free awk ip nproc dd; do
+    for cmd in bash free awk ip nproc dd; do
         if ! command -v "$cmd" &> /dev/null; then
             missing_deps+=("$cmd")
             
@@ -162,6 +158,16 @@ check_system() {
         fi
     else
         print_success "stress-ng available (optimal CPU control)"
+    fi
+    
+    # Warn about ping: required only if ENABLE_NETWORK=true is added to config later
+    if ! command -v ping &> /dev/null; then
+        print_warning "ping not found - network stress will not work if ENABLE_NETWORK=true is set"
+        if [[ "$pkg_manager" == "apt" ]]; then
+            print_info "To enable network stress later: sudo apt install iputils-ping -y"
+        else
+            print_info "To enable network stress later: sudo yum install iputils -y"
+        fi
     fi
     
     print_success "System check complete"
@@ -324,7 +330,8 @@ LOGROTATE
     # Show configuration summary
     echo -e "${CYAN}Configuration Summary:${NC}"
     echo "  • Mode: Continuous monitoring (no sleep cycles)"
-    echo "  • Default Targets: CPU 25%, Memory 30%, Network 30%"
+    echo "  • Default Targets: CPU 25%, Memory 30%"
+    echo "  • Network Stress: disabled by default"
     echo "  • Check Interval: 3 seconds"
     echo "  • Dashboard: Stable horizontal lines"
     echo
@@ -339,7 +346,7 @@ LOGROTATE
     
     echo -e "${CYAN}Customizing Your Targets:${NC}"
     echo "  1. Edit: ${YELLOW}sudo nano /etc/default/oracle-fixed-mode${NC}"
-    echo "  2. Set TARGET_CPU_PERCENT, TARGET_MEMORY_PERCENT, TARGET_NETWORK_PERCENT"
+    echo "  2. Set TARGET_CPU_PERCENT and TARGET_MEMORY_PERCENT"
     echo "  3. Save and restart: ${YELLOW}sudo systemctl restart oracle-fixed-mode${NC}"
     echo "  4. Watch Oracle Cloud Console metrics (updates every ~5 minutes)"
     echo
@@ -352,9 +359,9 @@ LOGROTATE
     
     echo -e "${YELLOW}⚠  Oracle Reclaim Prevention:${NC}"
     echo "  • Oracle reclaims instances if ALL metrics < 20% for 7 days"
-    echo "  • This script maintains targets 24/7 (no gaps)"
+    echo "  • This script maintains CPU and Memory targets 24/7 (no gaps)"
     echo "  • Check Oracle Console after 1 hour to verify"
-    echo "  • All three graphs should show stable horizontal lines"
+    echo "  • CPU and Memory graphs should show stable horizontal lines"
     echo
     
     echo "To uninstall: ${YELLOW}sudo bash $SCRIPT_DIR/install-fixed.sh --uninstall${NC}"
@@ -390,7 +397,8 @@ show_version() {
     echo "Continuous Monitoring Edition"
     echo
     echo "Features:"
-    echo "  • Manual target setting (CPU, RAM, Network)"
+    echo "  • Manual target setting (CPU and RAM)"
+    echo "  • Network stress disabled by default (enable via ENABLE_NETWORK=true)"
     echo "  • No sleep cycles - continuous 3s monitoring loop"
     echo "  • Proportional control prevents overshoot"
     echo "  • Self-healing: auto-restarts failed processes"
